@@ -1,0 +1,34 @@
+# 대회 데이터 (약 570 GB) — 절대 커밋하지 않는다
+/data/
+/input/
+*.dcm
+*.crdownload
+*.zip
+
+# 가중치·학습 산출물
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+outputs/
+checkpoints/
+wandb/
+lightning_logs/
+
+# 제출물·비밀값
+submission.csv
+.env
+.env.*
+kaggle.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Notebook
+.ipynb_checkpoints/
