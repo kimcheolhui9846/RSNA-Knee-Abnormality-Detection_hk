@@ -75,9 +75,10 @@ def test_ids_must_match_expected_set() -> None:
 
 def _sample_submission_path() -> Path | None:
     try:
-        return data_dir() / "sample_submission.csv"
+        path = data_dir() / "sample_submission.csv"
     except FileNotFoundError:
         return None
+    return path if path.is_file() else None
 
 
 @pytest.mark.skipif(_sample_submission_path() is None, reason="대회 데이터 없음")
