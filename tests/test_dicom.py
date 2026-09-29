@@ -110,8 +110,13 @@ def _real_series_dir() -> Path | None:
         root = data_dir()
     except FileNotFoundError:
         return None
-    row = pd.read_csv(root / "train_series.csv", nrows=1).iloc[0]
-    return root / "train_series" / row["StudyInstanceUID"] / row["SeriesInstanceUID"]
+    # data/ 폴더만 있고 메타데이터가 없으면 수집 단계에서 터지지 않고 skip한다
+    csv = root / "train_series.csv"
+    if not csv.is_file():
+        return None
+    row = pd.read_csv(csv, nrows=1, dtype=str).iloc[0]
+    series_dir = root / "train_series" / row["StudyInstanceUID"] / row["SeriesInstanceUID"]
+    return series_dir if series_dir.is_dir() else None
 
 
 @pytest.mark.skipif(_real_series_dir() is None, reason="대회 데이터 없음")
