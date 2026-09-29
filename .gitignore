@@ -1,6 +1,7 @@
 # 대회 데이터 (약 570 GB) — 절대 커밋하지 않는다
 /data/
 /input/
+/rsna-knee-abnormality-detection/
 *.dcm
 *.crdownload
 *.zip

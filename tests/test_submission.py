@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +5,7 @@ import pandas as pd
 import pytest
 
 from src.constants import ID_COL, LABELS
+from src.paths import data_dir
 from src.submission import validate_submission
 
 
@@ -73,11 +73,14 @@ def test_ids_must_match_expected_set() -> None:
         validate_submission(df, expected_ids=expected)
 
 
-def _sample_submission_path() -> Path:
-    return Path(os.environ.get("RSNA_DATA_DIR", "data")) / "sample_submission.csv"
+def _sample_submission_path() -> Path | None:
+    try:
+        return data_dir() / "sample_submission.csv"
+    except FileNotFoundError:
+        return None
 
 
-@pytest.mark.skipif(not _sample_submission_path().exists(), reason="대회 데이터 없음")
+@pytest.mark.skipif(_sample_submission_path() is None, reason="대회 데이터 없음")
 def test_labels_match_sample_submission_header() -> None:
     header = pd.read_csv(_sample_submission_path(), nrows=0).columns.tolist()
     assert header == [ID_COL, *LABELS]
