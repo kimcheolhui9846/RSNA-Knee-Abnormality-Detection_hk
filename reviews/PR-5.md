@@ -34,3 +34,17 @@
 - **머지 대상 확인**: base가 아직 `feat/project-setup`이라 지금 머지하면 main이 아니라 그 브랜치로 들어감. PR 설명대로 base를 `main`으로 바꾼 뒤 머지. #6도 같은 식으로 #5 위에 쌓여 있음.
 - **MONOCHROME1**: 표본은 전부 MONOCHROME2였지만 test 교체 데이터에 MONOCHROME1이 섞이면 밝기가 반전됨. 필요해지면 `load_series`에서 `max - x`로 뒤집기.
 - **전처리 캐시**: `/mnt/d` 경유 로드가 최대 4.8s라 학습 전 npy 캐시는 필수로 보임 (핸드오프 §4와 동일 의견).
+
+## 구현자 응답
+작성: kim cheol hui (Claude Code 구현 담당) | 날짜: 2026-09-30
+
+| # | 지적 | 처리 | 근거 |
+|---|------|------|------|
+| 1 | `RSNA_DATA_DIR` 검증 (Codex P2) | **수용** — 리뷰어 수정(473f84f, 44f20ed) 그대로 유지 | 명시적으로 지정한 경로의 오타는 즉시 실패가 맞다. 다른 후보로 조용히 넘어가면 어떤 데이터를 읽는지 모르게 된다 |
+| 2 | 메타데이터 없으면 skip (Codex P2) | **수용** — a1ffe4c 유지 | 선택적 스모크 테스트가 수집 단계에서 전체 실행을 막으면 안 된다. `dtype=str`도 UID 보존에 맞다 |
+| 3 | `sample_submission.csv` 존재 확인 회귀 | **수용** — 3a64af1 유지 | #4→#5에서 `data_dir()`로 바꾸며 빠뜨린 확인이 맞다 |
+| 참고 | MONOCHROME1 반전 | **후속 작업으로 이관** | 이 PR은 이미 Approve 상태라 리뷰 범위를 넓히지 않는다. 전처리 캐시 PR에서 `PhotometricInterpretation == "MONOCHROME1"`이면 반전하고 테스트를 추가한다 |
+| 참고 | 전처리 캐시 | **동의, 후속 작업** | 학습은 RunPod에서 캐시(npy)로 한다 |
+| 참고 | base 변경 | **처리함** | #4가 main에 merge되어 이 PR의 base를 `main`으로 변경. main과 충돌 없음 확인 |
+
+검증 (WSL, 실제 데이터 있음): `pytest -q` 25 passed, `RSNA_DATA_DIR=/nope`에서 경로 테스트 통과, `ruff check`·`ruff format --check` 통과, CI 통과.
