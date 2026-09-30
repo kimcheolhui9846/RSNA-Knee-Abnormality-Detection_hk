@@ -84,6 +84,18 @@ def test_rescale_slope_and_intercept_applied(tmp_path: Path) -> None:
     assert vol[0, 0, 0] == pytest.approx(15.0)
 
 
+def test_monochrome1_is_inverted_so_higher_means_brighter(tmp_path: Path) -> None:
+    # MONOCHROME1은 값이 작을수록 밝다. 뒤집지 않으면 MONOCHROME2 시리즈와 밝기가 반대가 된다
+    slices = [_slice(100, [0.0, 0.0, 0.0], 1), _slice(900, [-1.0, 0.0, 0.0], 2)]
+    for ds in slices:
+        ds.PhotometricInterpretation = "MONOCHROME1"
+    _write(tmp_path / "s", slices)
+
+    vol = load_series(tmp_path / "s")
+
+    assert vol[0, 0, 0] > vol[1, 0, 0]
+
+
 def test_jpeg2000_compressed_series_decodes(tmp_path: Path) -> None:
     # JPEG2000 인코더는 기본 해상도 단계 수 때문에 너무 작은 이미지를 거부한다
     ds = _slice(0, [0.0, 0.0, 0.0], 1, shape=(64, 64))
