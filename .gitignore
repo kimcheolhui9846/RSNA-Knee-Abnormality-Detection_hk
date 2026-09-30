@@ -2,6 +2,7 @@
 /data/
 /input/
 /rsna-knee-abnormality-detection/
+/cache/
 *.dcm
 *.crdownload
 *.zip
