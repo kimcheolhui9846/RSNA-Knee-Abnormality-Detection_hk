@@ -26,15 +26,20 @@
 
 ## 3. 결과
 - 테스트 49 passed (study_table 10, dataset 3 추가), `ruff check`·`ruff format --check` 통과 (WSL, torch CPU)
-- 전체 캐시는 아직 생성 중이라 실제 캐시로 Dataset을 끝까지 돌리는 확인은 캐시 완료 후 추가한다.
+- **실제 캐시 스모크 (2026-09-30, 전체 캐시 완료 후)**:
+  - `build_study_table`: 4,407 study 전부 포함 (캐시 없는 study 0), 라벨 있는 study 58
+  - study당 채워진 칸: 3칸 4 / 4칸 1,259 / 5칸 2,578 / 6칸 566 — `train_series.csv` 집계와 일치
+  - 칸 보유율: Sagittal-FS 0.942, Sagittal-nonFS 0.968, Coronal-FS 0.964, Coronal-nonFS 0.773, Axial-FS 1.000, Axial-nonFS 0.194
+  - `KneeStudyDataset(depth=16, size=256)`: `image (6, 16, 256, 256)` float32, 값 0.0–1.0, `slot_mask` 정상
+  - 로드 시간: study당 약 0.22초 (첫 읽기, `/mnt/d` HDD, 1 프로세스)
+  - fold 파일은 `folds/folds_v1.csv` (sha256 `82c80f07…aaff2`, PR #6 규칙으로 생성)
 
 ## 4. 미해결 문제
-- **캐시 생성 속도**: `/mnt/d` 읽기 병목으로 분당 약 50 시리즈 → 전체 약 8시간. 진행 중.
+- **학습 시 I/O**: 로컬 D 드라이브는 HDD라 여러 worker가 동시에 읽으면 느려진다. 학습은 RunPod(SSD)에 캐시(50 GiB)를 옮겨서 한다.
 - **라벨 있는 study는 58개**: 이 Dataset만으로는 지도 학습 샘플이 58개다. pseudo-label(2단계)이 들어오면 `labels`/`label_mask`에 그대로 합친다.
 - **메모리·속도**: 샘플 하나가 6 × depth × 256² float32 (depth 32면 약 50MB). DataLoader worker 수와 depth는 RunPod에서 조정.
 - **증강 없음**: 좌우 반전(무릎 좌/우), 밝기 등은 exp001에서 정한다.
 
 ## 5. 다음 작업자가 할 일
-1. 캐시 완료 후: 실제 캐시로 `build_study_table` → `KneeStudyDataset` 스모크, 통계를 이 문서에 추가
-2. exp001 (로드맵 1단계): 2D 백본 + 슬라이스/시리즈 집계, 58개 라벨로 fold CV
-3. 캐시를 RunPod으로 옮기기
+1. exp001 (로드맵 1단계): 2D 백본 + 슬라이스/시리즈 집계, 58개 라벨로 fold CV
+2. 캐시를 RunPod으로 옮기기
