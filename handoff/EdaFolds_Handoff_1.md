@@ -36,7 +36,7 @@
 테스트 30 passed, ruff 통과 (WSL).
 
 ## 4. 미해결 문제
-- **fold 파일을 커밋하지 않았다.** 저장소가 PUBLIC이라 대회 데이터의 StudyInstanceUID 4407개를 공개하게 된다. 대회 규칙상 데이터 외부 공유 문제가 될 수 있어 결정 대기. 대신 `python -m src.folds`로 누구나 같은 파일을 다시 만들 수 있고, 위 해시로 대조한다.
+- **fold 파일은 커밋하지 않는다 (2026-09-30 결정).** 저장소를 공개로 유지하므로 대회 데이터의 StudyInstanceUID를 올리지 않는다. `.gitignore`에 `/folds/*.csv`, `/pseudo_labels/`를 추가했다. 각자 `python -m src.folds`로 만들고 위 해시로 대조한다.
 - **CV 신뢰도**: 58개 CV는 라벨별 AUC 하나가 양성 몇 개로 크게 흔들린다. repeated k-fold나 여러 seed 평균을 검토할 것.
 - **라벨 있는 58개와 전체의 분포 차이**: 58개는 양성률이 높아 선별된 표본일 수 있다. test 분포와 같다는 보장이 없다.
 - **환자 단위 중복 여부**: 확인 불가 (Kaggle Data/Discussion 탭 확인 필요).
