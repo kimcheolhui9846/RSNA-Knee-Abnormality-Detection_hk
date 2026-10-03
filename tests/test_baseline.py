@@ -97,3 +97,33 @@ def test_run_cross_validation_on_synthetic_data(tmp_path: Path) -> None:
     assert any(k.startswith("fold0.") for k in weights)
     assert any(k.startswith("fold1.") for k in weights)
     assert np.isfinite(result["macro_auc"]) or np.isnan(result["macro_auc"])
+
+
+def test_pseudo_labels_are_trained_on_but_only_ground_truth_is_evaluated(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    # 정답 12개 + pseudo 8개(일부 라벨 NaN), 캐시는 데이터 루트에 바로 둔다 (HF 데이터셋 구성)
+    make_synthetic_data(data, n_studies=12, depth=6, size=32, n_pseudo=8, cache_subdir=".")
+    config = {
+        "model": TINY,
+        "seed": 0,
+        "n_folds": 2,
+        "epochs": 1,
+        "batch_size": 4,
+        "lr": 1e-3,
+        "weight_decay": 0.0,
+        "depth": 4,
+        "size": 32,
+        "target_slices": 6,
+        "num_workers": 0,
+        "amp": False,
+        "train_on": "any",
+        "cache_dir": ".",
+    }
+
+    result = run(config, data_dir=data, out_dir=tmp_path / "out", device="cpu")
+
+    assert result["n_studies"] == 12  # 평가 대상 = 정답 study만
+    assert result["n_train_studies"] == 20  # 학습 대상 = 정답 + pseudo
+    oof = pd.read_csv(tmp_path / "out" / "oof.csv")
+    assert len(oof) == 12
+    assert not oof[ID_COL].str.startswith("pseudo").any()
