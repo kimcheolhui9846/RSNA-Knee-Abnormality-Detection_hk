@@ -1,4 +1,5 @@
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -88,6 +89,30 @@ def test_extract_labels_returns_valid_pseudo_label_frame() -> None:
     assert labels.set_index(ID_COL).loc["a", "ACL"] == 1.0
     assert labels.set_index(ID_COL).loc["b", "ACL"] == 0.0
     assert raw[ID_COL].tolist() == ["a", "b"] and "response" in raw.columns
+
+
+def test_vllm_generate_disables_flashinfer_sampler_before_engine_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pod 이미지의 nvcc(12.4)는 flashinfer JIT 옵션(--compress-mode)을 몰라 엔진이 죽었다
+    # (run 20261003-083742-68db3c). 샘플러를 PyTorch 경로로 돌려 JIT 컴파일을 피한다.
+    import sys
+    import types
+
+    seen: dict[str, str | None] = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs) -> None:
+            seen["env"] = os.environ.get("VLLM_USE_FLASHINFER_SAMPLER")
+
+    fake = types.SimpleNamespace(LLM=FakeLLM, SamplingParams=lambda **kw: kw)
+    monkeypatch.setitem(sys.modules, "vllm", fake)
+    monkeypatch.delenv("VLLM_USE_FLASHINFER_SAMPLER", raising=False)
+
+    from src.pseudo.extract import vllm_generate
+
+    vllm_generate("some/model")
+    assert seen["env"] == "0"
 
 
 def test_extract_rejects_missing_report_column() -> None:

@@ -3,6 +3,7 @@
 LLM 호출은 `generate`로 주입한다 (테스트는 가짜 생성기, Pod에서는 vLLM).
 """
 
+import os
 from collections.abc import Callable
 
 import numpy as np
@@ -43,7 +44,13 @@ def extract_labels(
 
 
 def vllm_generate(model: str, max_model_len: int = 8192, max_tokens: int = 512) -> Generate:
-    """Pod(GPU) 전용. vLLM 채팅 생성 함수를 만든다 (temperature 0, 결정적)."""
+    """Pod(GPU) 전용. vLLM 채팅 생성 함수를 만든다 (temperature 0, 결정적).
+
+    FlashInfer 샘플러는 끈다: 실행 시점에 시스템 nvcc로 커널을 컴파일하는데, 템플릿 이미지의
+    nvcc(CUDA 12.4)가 그 옵션(`--compress-mode`)을 몰라 엔진 초기화가 실패했다
+    (run 20261003-083742-68db3c). PyTorch 샘플링 경로는 컴파일이 필요 없다.
+    """
+    os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     from vllm import LLM, SamplingParams
 
     llm = LLM(model=model, max_model_len=max_model_len, dtype="bfloat16")
