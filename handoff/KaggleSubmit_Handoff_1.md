@@ -28,7 +28,19 @@
 - 깨끗한 Python 3.11 + pip에서 `pip install --no-index` 오프라인 휠 설치·import 성공
 - 꾸러미 크기: 코드 18.9 MB (휠 포함), 가중치 94.4 MB
 
+### Kaggle 실제 제출 (2026-10-03~04, API, 사용자 `kimche12`)
+- 데이터셋(비공개): `kimche12/rsna-knee-code`(v2, 휠 py3.10–3.14), `kimche12/rsna-knee-weights`(exp002 가중치, sha `35ec4197…`)
+- 노트북 `kimche12/rsna-knee-submit` (비공개, GPU, 인터넷 OFF)
+  - v1: 추론 성공(fallback 0)이었지만 오프라인 휠 설치 실패 — Kaggle Python이 **3.13**이라 cp310–312 휠이 맞지 않았고,
+    한 줄 설치라 timm까지 같이 실패 → 패키지별 설치 + cp313/cp314 휠 추가 + Python·디코더 로그로 수정
+  - v2: Python 3.13.15, 휠 4종 설치 rc=0, 압축 DICOM 디코더 사용 가능, GPU 추론 3 study 50초, fallback 0
+- 실제 Kaggle 마운트 경로: `/kaggle/input/datasets/<user>/<slug>`, `/kaggle/input/competitions/<slug>` — 표시 파일 탐색이 유효했다
+- **전체 17.6분 중 대부분이 입력 경로 탐색**으로 추정: `/kaggle/input/**` 재귀 glob이 대회 train DICOM 수십만 파일까지 훑는다 →
+  Efficiency 트랙을 위해 탐색 깊이를 제한해야 한다 (다음 작업)
+- 대회 제출: v2 → submission ref `56800890` (메시지 "exp002 … CV 0.778"), 점수는 `experiments/exp002.md`에 기록
+
 ## 4. 미해결 문제
+- **입력 경로 탐색 시간**: 위 참고. `find_one`을 `/kaggle/input/*/`, `*/*/*/` 등 얕은 깊이만 보도록 바꾼다
 - **Kaggle 실측 필요**: test 약 1,300 study 기준 시간. 로컬 CPU는 study당 약 8초(5 fold, HDD). Kaggle GPU에서는 디코딩이 병목일 것 → 첫 제출 로그로 확인
 - **Kaggle 인증 없음**: 이 PC에 `kaggle.json`이 없다. 업로드(`kaggle datasets create`, `kaggle kernels push`)와 제출에 필요
 - **압축 DICOM**: train 표본에는 없었다. test에 있으면 오프라인 디코더가 필요 → 휠 포함으로 대비
