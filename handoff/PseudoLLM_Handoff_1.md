@@ -27,6 +27,16 @@
 - smoke-test(가짜 생성기, CPU): 추출 → 두 해석 채점 → 파일 5개 생성, 종료 코드 0
 - 실제 LLM 결과: 실행 후 추가 (비교 기준: 영어 키워드 매칭 macro AUC 0.547)
 
+**1차 실행 실패 (run `20261003-083742-68db3c`, RTX 4090, 약 4분, 약 $0.05)**
+- 증상: `RuntimeError: Engine core initialization failed`. 모델 로드(14.3 GiB)와 KV 캐시 측정까지는 정상
+- 원인: vLLM 0.30이 설치한 flashinfer 0.6.18이 샘플링 커널을 실행 시점에 시스템 nvcc로 JIT 컴파일하는데,
+  템플릿 이미지(`runpod/pytorch:2.4.0 ... cuda12.4.1`)의 nvcc 12.4가 `--compress-mode=size` 옵션을 몰라
+  `nvcc fatal: Unknown option` → ninja 빌드 실패
+- 확인: vLLM 0.30 소스에서 `VLLM_USE_FLASHINFER_SAMPLER=0`이면 `flashinfer_sampler_supported()`가 False가 되어
+  PyTorch 샘플링 경로(`apply_top_k_top_p` + `gumbel_sample`)를 쓴다. 어텐션은 실패 전 프로파일링에서 이미 정상 실행됨
+- 수정: `vllm_generate()`가 vLLM import 전에 `VLLM_USE_FLASHINFER_SAMPLER=0` 설정 (회귀 테스트 추가)
+- 대안(미적용): CUDA 12.8 이상 이미지로 템플릿 교체 — 이미지 이름·호스트 드라이버 확인이 더 필요
+
 ## 4. 미해결 문제
 - **실행 승인 대기**: train.csv(report 원문 포함)를 HF 비공개 데이터셋에 올리는 것과 RunPod 실행
 - **컨테이너 디스크**: vLLM + 새 torch + 7B 모델(약 15GB)은 기본 템플릿 30GB에 빠듯하다 → 디스크를 키운 템플릿을 따로 만들고 이 작업 폴더의 `.harness.env`에서만 쓴다 (전역 `.env`는 그대로)
