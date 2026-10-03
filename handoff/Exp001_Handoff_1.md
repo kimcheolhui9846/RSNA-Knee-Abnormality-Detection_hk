@@ -26,7 +26,10 @@
 - 로컬(WSL, `CUDA_VISIBLE_DEVICES=`로 GPU 숨김): 테스트 52 passed, `ruff check`·`ruff format --check` 통과
 - 하네스 smoke-test(CPU, 합성 데이터): 2-fold 끝까지 실행, 가중치·OOF·metrics 생성, 종료 코드 0
 - 업로드 데이터 검증: 58 study, fold별 12/10/12/11/13, 모든 study가 3칸 이상
-- RunPod 학습 결과: `experiments/exp001.md`에 추가 예정
+- **RunPod 학습 (run `20261003-075031-2ac423`, RTX 4090)**: 성공. OOF macro AUC **0.590**, fold std 0.097
+  (fold 0.640 / 0.732 / 0.444 / 0.647 / 0.566), 최저 MCL 0.494. 학습 264.5초, Pod 약 6분, 약 $0.08.
+  끝난 뒤 남은 Pod 0개 확인. 라벨별 표와 해석은 `experiments/exp001.md`
+- 해석: 라벨 58개로는 신호가 약하고 분산이 크다. 다음은 pseudo-label 투입
 
 **사고 기록**: 처음 smoke-test는 WSL torch가 Windows GPU를 자동으로 잡아 로컬 RTX 3070 Ti에서 약 4초 돌았다(합성 데이터, 32px). 이후 모든 로컬 실행에 `CUDA_VISIBLE_DEVICES=`를 붙인다.
 
@@ -36,6 +39,5 @@
 - pseudo-label(4349 study)을 붙이면 전체 캐시(50 GiB) 업로드가 필요하다 → Network Volume 검토.
 
 ## 5. 다음 작업자가 할 일
-1. RunPod 결과(`runs/<run_id>/metrics.json`)로 `experiments/exp001.md`, README 표 갱신
-2. pseudo-label 2단계(LLM 추출) 후 라벨 없는 study를 학습에 합치는 exp
-3. 제출 노트북(`kaggle/`) 뼈대
+1. pseudo-label 2단계(LLM 추출) 후 라벨 없는 study를 학습에 합치는 exp
+2. 제출 노트북(`kaggle/`) 뼈대
