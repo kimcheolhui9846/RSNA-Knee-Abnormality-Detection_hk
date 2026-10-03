@@ -39,16 +39,27 @@ def main() -> None:
     competition = find_one("**/test_series.csv").parent
     log.info("code %s | weights %s | data %s", code, weights, competition)
 
+    log.info("python %s", sys.version.split()[0])
+
     # 오프라인 휠: 압축 DICOM 디코더와 학습 때와 같은 버전의 timm.
-    # 설치에 실패해도 Kaggle 이미지에 이미 있는 패키지로 진행한다
+    # 패키지마다 따로 설치한다 — 한 줄로 묶으면 하나(맞는 Python 버전 휠 없음)만 실패해도
+    # 전부 설치되지 않는다 (2026-10-03 Kaggle 1차 실행에서 확인).
+    # 실패해도 Kaggle 이미지에 이미 있는 패키지로 진행한다
     wheels = code / "wheels"
     if wheels.is_dir():
-        pkgs = ["timm", "pylibjpeg", "pylibjpeg-libjpeg", "pylibjpeg-openjpeg"]
         cmd = [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", "-q"]
-        r = subprocess.run(
-            [*cmd, "--find-links", str(wheels), *pkgs], capture_output=True, text=True
-        )
-        log.info("offline wheels install rc=%d %s", r.returncode, r.stderr.strip()[-300:])
+        for pkg in ("timm", "pylibjpeg", "pylibjpeg-libjpeg", "pylibjpeg-openjpeg"):
+            r = subprocess.run(
+                [*cmd, "--find-links", str(wheels), pkg], capture_output=True, text=True
+            )
+            log.info("offline wheel %s rc=%d %s", pkg, r.returncode, r.stderr.strip()[-200:])
+    try:
+        import libjpeg  # noqa: F401
+        import openjpeg  # noqa: F401
+
+        log.info("compressed DICOM decoders: available")
+    except ImportError as e:
+        log.info("compressed DICOM decoders: MISSING (%s) — 압축 DICOM은 fallback될 수 있다", e)
 
     sys.path.insert(0, str(code))
     os.environ["RSNA_DATA_DIR"] = str(competition)
