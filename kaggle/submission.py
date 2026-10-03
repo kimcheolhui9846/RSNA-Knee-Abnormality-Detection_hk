@@ -20,11 +20,34 @@ INPUT = Path(os.environ.get("KAGGLE_INPUT_DIR", "/kaggle/input"))
 OUT = Path(os.environ.get("KAGGLE_SUBMISSION_PATH", "/kaggle/working/submission.csv"))
 
 
-def find_one(pattern: str) -> Path:
-    hits = sorted(INPUT.glob(pattern))
-    if not hits:
-        raise FileNotFoundError(f"/kaggle/input에서 {pattern}을 찾지 못했다")
-    return hits[0]
+# 대회 DICOM 트리(수십만 파일). 1차 제출에서 `/kaggle/input/**` 재귀 glob이
+# 이 안까지 훑어 15분 넘게 걸렸다
+SKIP_DIRS = {"train_series", "test_series"}
+
+
+def find_one(name: str, root: Path | None = None, max_depth: int = 4) -> Path:
+    """`root` 아래에서 파일 이름이 `name`인 첫 파일을 얕은 폴더부터(너비 우선) 찾는다.
+
+    깊이 `max_depth`까지의 폴더만 열고, DICOM 트리(`SKIP_DIRS`)는 열지 않는다.
+    현재 마운트(`datasets/<user>/<slug>/`, `competitions/<slug>/`)와
+    예전 마운트(`<slug>/`) 모두 깊이 3 이내다.
+    """
+    root = INPUT if root is None else Path(root)
+    level = [root]
+    for _ in range(max_depth + 1):
+        next_level: list[Path] = []
+        for d in sorted(level):
+            try:
+                entries = list(os.scandir(d))
+            except OSError:
+                continue
+            for e in sorted(entries, key=lambda x: x.name):
+                if e.is_file() and e.name == name:
+                    return Path(e.path)
+                if e.is_dir() and e.name not in SKIP_DIRS:
+                    next_level.append(Path(e.path))
+        level = next_level
+    raise FileNotFoundError(f"{root}에서 {name}을 찾지 못했다 (깊이 {max_depth}까지)")
 
 
 def main() -> None:
@@ -34,10 +57,16 @@ def main() -> None:
     )
     log = logging.getLogger("submit")
 
-    code = find_one("**/rsna_knee_code.marker").parent
-    weights = find_one("**/rsna_knee_weights.marker").parent
-    competition = find_one("**/test_series.csv").parent
-    log.info("code %s | weights %s | data %s", code, weights, competition)
+    code = find_one("rsna_knee_code.marker").parent
+    weights = find_one("rsna_knee_weights.marker").parent
+    competition = find_one("test_series.csv").parent
+    log.info(
+        "code %s | weights %s | data %s (경로 탐색 %.1fs)",
+        code,
+        weights,
+        competition,
+        time.time() - started,
+    )
 
     log.info("python %s", sys.version.split()[0])
 
