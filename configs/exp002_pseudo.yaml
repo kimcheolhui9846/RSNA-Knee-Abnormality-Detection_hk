@@ -16,9 +16,11 @@ depth: 16
 size: 256
 target_slices: 30
 
-# 학습 study가 58 → 약 3,500(fold당)이라 epoch을 줄이고 batch를 키운다
+# 학습 study가 58 → 약 3,500(fold당)이라 epoch을 줄인다.
+# batch는 exp001과 같은 2: study 하나가 6칸 × 16장 = 96장이라 batch 8이면 768장이 한 번에 백본을 지나
+# 24 GB GPU에서 메모리가 부족할 가능성이 크다 (exp001은 192장으로 동작 확인)
 epochs: 4
-batch_size: 8
+batch_size: 2
 lr: 3.0e-4
 weight_decay: 1.0e-2
 amp: true
