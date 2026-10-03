@@ -39,8 +39,11 @@
   Efficiency 트랙을 위해 탐색 깊이를 제한해야 한다 (다음 작업)
 - 대회 제출: v2 → submission ref `56800890` (메시지 "exp002 … CV 0.778"), 점수는 `experiments/exp002.md`에 기록
 
+- **실행 시간 단축 (v3)**: `find_one`을 너비 우선·최대 깊이 4로 바꾸고 `train_series`/`test_series`는 열지 않는다
+  (테스트 4개: 현재·예전 마운트 경로, DICOM 트리 미진입, 깊이 제한). 공개 test 기준 전체 **17.6분 → 0.9분**, 경로 탐색 0.0초
+- 대회 제출 2: v3 → submission ref `56801888` (가중치는 `56800890`과 같음, 실행 시간만 다름)
+
 ## 4. 미해결 문제
-- **입력 경로 탐색 시간**: 위 참고. `find_one`을 `/kaggle/input/*/`, `*/*/*/` 등 얕은 깊이만 보도록 바꾼다
 - **Kaggle 실측 필요**: test 약 1,300 study 기준 시간. 로컬 CPU는 study당 약 8초(5 fold, HDD). Kaggle GPU에서는 디코딩이 병목일 것 → 첫 제출 로그로 확인
 - **Kaggle 인증 없음**: 이 PC에 `kaggle.json`이 없다. 업로드(`kaggle datasets create`, `kaggle kernels push`)와 제출에 필요
 - **압축 DICOM**: train 표본에는 없었다. test에 있으면 오프라인 디코더가 필요 → 휠 포함으로 대비
