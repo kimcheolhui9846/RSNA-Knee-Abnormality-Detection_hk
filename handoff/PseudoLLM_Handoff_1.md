@@ -25,7 +25,22 @@
 ## 3. 결과
 - 테스트 42 passed (프롬프트 3, 파싱 4, 추출 2 추가), `ruff check`·`ruff format --check` 통과
 - smoke-test(가짜 생성기, CPU): 추출 → 두 해석 채점 → 파일 5개 생성, 종료 코드 0
-- 실제 LLM 결과: 실행 후 추가 (비교 기준: 영어 키워드 매칭 macro AUC 0.547)
+- **2차 실행 성공 (run `20261003-084617-8e33d4`, RTX 4090, Pod 약 9분, 약 $0.11)**: Qwen2.5-7B-Instruct,
+  4,407 report 추출 290.5초, 파싱 실패 5건(0.1%). 결과물은 HF 비공개 `runs/20261003-084617-8e33d4/`
+  (`pseudo_labels.csv`, `raw_responses.csv`, `metrics.json`) — 대회 데이터 파생물이라 저장소에는 올리지 않는다
+
+  58개 정답 기준 macro (비교: 영어 키워드 매칭 AUC 0.547):
+
+  | 해석 | coverage | accuracy | sensitivity | specificity | AUC |
+  |------|----------|----------|-------------|-------------|-----|
+  | **언급 없음 = 음성 (채택)** | 0.960 | 0.818 | 0.799 | 0.806 | **0.802** |
+  | 언급 없음 = 판단 보류 | 0.859 | 0.804 | 0.811 | 0.776 | 0.793 |
+
+  라벨별 AUC (채택 해석): MCL 0.94, Baker's 0.89, Medial OA 0.88, ACL 0.86, Medial Meniscus 0.86,
+  Lateral Meniscus 0.81, Lateral OA 0.81, Fracture 0.80, Contusion 0.76, **PF OA 0.70, Synovitis 0.68, Effusion 0.65**
+  - Effusion: 민감도 0.94 / 특이도 0.36 → 소량(생리적) 삼출까지 양성으로 잡는 경향
+  - PF OA: 민감도 0.48 → 슬개대퇴 연골 변성을 놓침
+  - Synovitis: 민감도·특이도 모두 0.6–0.7
 
 **1차 실행 실패 (run `20261003-083742-68db3c`, RTX 4090, 약 4분, 약 $0.05)**
 - 증상: `RuntimeError: Engine core initialization failed`. 모델 로드(14.3 GiB)와 KV 캐시 측정까지는 정상
@@ -43,5 +58,8 @@
 - 58개 채점의 한계와 언어 편중(라벨 있는 58개 중 프랑스어 0개)은 PR #7 핸드오프와 같다
 
 ## 5. 다음 작업자가 할 일
-1. 승인 후: report 데이터셋 업로드 → 템플릿 준비 → `TRAIN_ENTRY=pseudo_job.py`로 RunPod 실행
-2. `metrics.json`의 두 해석 중 좋은 쪽 선택 → 4,349개 pseudo-label로 학습하는 exp002
+1. exp002: 4,349개 pseudo-label(언급 없음 = 음성 해석) + 58개 정답으로 학습. 전체 캐시(50 GiB)를 Pod에 올리는 방법 결정 필요
+   (HF 데이터셋 vs RunPod Network Volume)
+2. 약한 라벨(Effusion·PF OA·Synovitis) 프롬프트 개선: 생리적 소량 삼출은 음성, 슬개대퇴 연골 변성 용어(chondromalacia 등) 명시.
+   단 58개로 프롬프트를 계속 맞추면 이 58개에 과적합된다 — 고친 뒤 한 번만 재채점
+3. 재실행 시 `raw_responses.csv`가 있으면 LLM을 다시 돌리지 않고 `parse_response` 해석만 바꿀 수 있다
