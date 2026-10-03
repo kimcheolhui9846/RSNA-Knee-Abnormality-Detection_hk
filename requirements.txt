@@ -1,0 +1,8 @@
+# RunPod Pod에서 pseudo_job.py 실행에 필요한 패키지 (runpod-hf-harness의 start_up.sh가 pip로 설치)
+# vllm은 맞는 torch를 함께 설치한다 (템플릿 이미지의 torch를 교체).
+huggingface_hub
+safetensors
+numpy
+pandas
+scikit-learn
+vllm
