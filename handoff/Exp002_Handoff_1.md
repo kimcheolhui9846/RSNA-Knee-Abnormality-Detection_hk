@@ -18,7 +18,7 @@
 | fold | `folds_v1` 그대로, pseudo study도 fold 적용 | fold k 검증 때 fold k의 study 전부를 학습에서 빼서 누수 구조를 단순하게 유지 |
 | 업로드 | `D:\kag\cache\256`에서 바로 (복사본 없음), 메타는 `D:\kag-exp002\outputs\exp002_meta\` | 사용자 지시: 드라이브는 D. 54 GB 사본을 만들지 않는다 |
 | 업로드 실행 | 최소화된 별도 PowerShell 창 | Claude 백그라운드 작업의 시간 제한을 피하고, 끊겨도 이어서 올라간다 |
-| epoch / batch | 4 / 8 (workers 8) | 학습 study가 약 60배 → 시간 예산(약 2시간) 안에서 |
+| epoch / batch | 4 / 2 (workers 8) | 학습 study가 약 60배 → epoch을 줄였다. batch는 exp001과 같은 2: study당 96장이라 batch 8(768장)은 24 GB GPU 메모리 부족 위험 |
 | 템플릿 | 80 GB 디스크(`lg5zv4d3sw`), `.harness.env`로 지정 | 데이터셋 54 GB를 컨테이너 디스크로 내려받는다 |
 
 ## 3. 결과
