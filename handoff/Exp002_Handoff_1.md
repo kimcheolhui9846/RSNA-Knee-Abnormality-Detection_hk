@@ -26,7 +26,10 @@
 - labels.csv: gt 58, pseudo 4,349, pseudo의 판단 보류 칸 4.2%
 - **정답 58개와 pseudo의 양성률이 크게 다르다** (Fracture 0.31 vs 0.05, Contusion 0.33 vs 0.13, ACL 0.41 vs 0.18) →
   58개가 이상 소견 위주로 선별된 표본일 수 있다. `experiments/exp002.md` 참고
-- RunPod 학습 결과: 실행 후 추가
+- **RunPod 학습 (run `20261003-103402-9357a9`, RTX 4090)**: 성공. 정답 58 OOF macro AUC **0.778** (exp001 0.590),
+  fold std 0.042, 최저 MCL 0.587. 학습 74분, 데이터 다운로드·설치 약 1시간, Pod 약 2시간 20분 / 약 $1.7.
+  끝난 뒤 남은 Pod 0개 확인. 라벨별 비교와 해석은 `experiments/exp002.md`
+- 업로드 실측: 54 GB가 HF에 약 1시간 25분(전송 약 15 MB/s + 커밋), 파일 24,375개 확인
 
 ## 4. 미해결 문제
 - 업로드 소요: 약 12 MB/s → 54 GB에 약 75분 (진행 중)
@@ -34,7 +37,8 @@
 - 58개 CV의 대표성 (위 양성률 차이)
 
 ## 5. 다음 작업자가 할 일
-1. 업로드 완료 확인 → 메타 폴더(labels/folds)를 같은 데이터셋에 추가 업로드
-2. `.harness.env`: `DATA_HF_REPO=cheolhhh9846/rsna-knee-cache256`, `RUNPOD_TEMPLATE_ID=lg5zv4d3sw`,
-   `TRAIN_ARGS=--config configs/exp002_pseudo.yaml` → dry-run → 실행(승인 후)
-3. 결과로 `experiments/exp002.md`, README 표, PR 본문 갱신. 좋아지면 제출 꾸러미 가중치 교체
+1. exp002 가중치로 Kaggle 제출 → LB로 58개 CV의 대표성 확인
+2. Pod마다 54 GB 다운로드에 약 1시간 → 실험을 반복하려면 Network Volume(월 과금) 검토
+3. 개선 후보: 해상도·depth(16→24/32), 백본, MCL·PF OA 약점(관상면·슬개대퇴 슬라이스 선택)
+- 재실행 설정(`.harness.env`, 로컬): `DATA_HF_REPO=cheolhhh9846/rsna-knee-cache256`, `RUNPOD_TEMPLATE_ID=lg5zv4d3sw`,
+  `TRAIN_ARGS=--config configs/exp002_pseudo.yaml`
