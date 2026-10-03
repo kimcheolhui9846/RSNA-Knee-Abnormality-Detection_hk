@@ -70,7 +70,42 @@ def build(
         "kernel_sources": [],
     }
     (kernel / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
+    _write_notebook(kernel / "submission.py", kernel / f"{KERNEL_SLUG}.ipynb")
     return {"code": code, "weights": wdir, "kernel": kernel}
+
+
+def _write_notebook(script: Path, out: Path) -> None:
+    """Kaggle 웹 "Import Notebook"용 .ipynb: 제출 스크립트 전체를 코드 셀 하나에 담는다."""
+    source = script.read_text(encoding="utf-8")
+    nb = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {
+            "kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"},
+            "language_info": {"name": "python"},
+        },
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "id": "intro",
+                "metadata": {},
+                "source": [
+                    "# RSNA Knee — 제출 노트북\n",
+                    "인터넷 OFF, GPU ON. 입력: 대회 데이터 + "
+                    "rsna-knee-code + rsna-knee-weights 데이터셋",
+                ],
+            },
+            {
+                "cell_type": "code",
+                "id": "submit",
+                "metadata": {},
+                "execution_count": None,
+                "outputs": [],
+                "source": source.splitlines(keepends=True),
+            },
+        ],
+    }
+    out.write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def main() -> None:

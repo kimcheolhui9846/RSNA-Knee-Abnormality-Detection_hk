@@ -35,6 +35,13 @@
 - FALLBACK 0.5는 AUC상 중립값이지만, 실패 study가 많으면 점수를 깎는다. 로그의 fallback 수를 확인
 
 ## 5. 다음 작업자가 할 일
-1. Kaggle 인증 설정 후 `python kaggle/build_kaggle.py --user <사용자명> --weights ... --wheels ...`
-2. `kaggle datasets create -p outputs/kaggle/code`, `-p outputs/kaggle/weights` → `kaggle kernels push -p outputs/kaggle/kernel`
-3. 노트북 실행 로그에서 시간·fallback 수 확인 → 대회에 제출
+**웹 제출 (2026-10-03 결정: 사용자가 사이트에서 직접 제출)**
+- 빌드한 꾸러미는 작업 폴더 `kaggle_upload/`(git 무시)에 있다: `code.zip`, `weights.zip`,
+  `kernel/rsna-knee-submit.ipynb`, 단계별 안내 `README_제출방법.md`, 확인용 `local_check/` csv.
+- 실제 업로드 파일(zip 해제 + ipynb 코드 셀)로 Kaggle 흉내 실행: 마운트 경로를 바꿔도 성공, 로컬 결과와 차이 0.0
+- 순서: 데이터셋 2개(Private) 생성 → 대회 Code에서 ipynb Import → Input 3개 연결, GPU ON, Internet OFF
+  → Run All로 시험 → Save & Run All → Submit
+- 노트북 실행 로그의 시간·fallback 수를 기록하고, LB 점수를 `experiments/exp001.md`·README에 반영
+
+**API 제출 (선택, Kaggle 인증이 있을 때)**
+- `python kaggle/build_kaggle.py --user <사용자명> ...` → `kaggle datasets create -p ...` → `kaggle kernels push -p ...`
