@@ -34,3 +34,11 @@ def test_build_creates_code_weights_and_offline_kernel(tmp_path: Path) -> None:
     assert meta["competition_sources"] == ["rsna-knee-abnormality-detection"]
     assert meta["dataset_sources"] == ["me/rsna-knee-code", "me/rsna-knee-weights"]
     assert (dirs["kernel"] / "submission.py").is_file()
+
+    # 웹에서 "Import Notebook"으로 올릴 .ipynb: 제출 스크립트 전체가 코드 셀 하나에 들어 있다
+    nb = json.loads((dirs["kernel"] / "rsna-knee-submit.ipynb").read_text(encoding="utf-8"))
+    assert nb["nbformat"] == 4
+    code_cells = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    assert len(code_cells) == 1
+    script = (dirs["kernel"] / "submission.py").read_text(encoding="utf-8")
+    assert "".join(code_cells[0]["source"]) == script

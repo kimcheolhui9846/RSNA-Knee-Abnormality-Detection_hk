@@ -20,6 +20,7 @@ lightning_logs/
 
 # 제출물·비밀값
 submission.csv
+/kaggle_upload/
 .env
 .env.*
 kaggle.json
