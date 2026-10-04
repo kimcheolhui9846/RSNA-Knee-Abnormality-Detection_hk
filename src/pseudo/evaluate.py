@@ -21,7 +21,8 @@ def evaluate_extraction(
     """라벨별 지표와 macro 평균 행을 돌려준다.
 
     - truth에서 12개 라벨이 모두 있는 study만 정답으로 쓴다.
-    - pred의 NaN은 판단 보류다. coverage에만 반영하고 나머지 지표에서는 뺀다.
+    - pred의 NaN은 판단 보류다. coverage에만 반영하고 나머지 지표와 `n`에서는 뺀다.
+      macro 행의 `n`은 정답 study 수다.
     - accuracy / sensitivity / specificity는 `threshold` 이상을 양성으로 본다.
     - auc는 pred 값을 점수로 쓴다 (정답이 한 클래스뿐이면 NaN).
     """
@@ -42,7 +43,7 @@ def evaluate_extraction(
         hard = s >= threshold
         pos = t == 1
         rows[label] = {
-            "n": float(len(answered)),
+            "n": float(len(t)),  # 판단 보류를 뺀, 지표 계산에 실제로 쓴 study 수
             "coverage": float(answered.mean()),
             "accuracy": float((hard == pos).mean()) if len(t) else np.nan,
             "sensitivity": float(hard[pos].mean()) if pos.any() else np.nan,
