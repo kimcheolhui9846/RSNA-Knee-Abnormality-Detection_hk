@@ -126,7 +126,13 @@ def train_model(cfg: Config) -> Path:
             "dropout": 0.0,
         }
 
-    result = run(config, data_dir=data_dir, out_dir=cfg.output_dir, heartbeat=heartbeat)
+    result = run(
+        config,
+        data_dir=data_dir,
+        out_dir=cfg.output_dir,
+        heartbeat=heartbeat,
+        checkpoint_dir=cfg.checkpoint_dir,  # fold마다 저장 → 실패·시간 초과 때 하네스가 업로드
+    )
     cfg.extra["result"] = {k: result[k] for k in ("macro_auc", "fold_std", "elapsed_sec")}
     return cfg.output_dir / "model.safetensors"
 
