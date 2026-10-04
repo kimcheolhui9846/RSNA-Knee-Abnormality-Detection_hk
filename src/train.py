@@ -44,7 +44,32 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_table(data_dir: Path, target_slices: int) -> pd.DataFrame:
+def validate_folds(labels: pd.DataFrame, folds: pd.DataFrame, n_folds: int | None = None) -> None:
+    """학습에 쓰는 study(source가 gt / pseudo)가 folds에 정확히 한 번씩, 정수 fold로 있는지 확인.
+
+    inner merge는 빠진 study를 조용히 학습에서 빼고 중복 study를 두 번 넣으므로 여기서 먼저 막는다.
+    """
+    if labels[ID_COL].duplicated().any():
+        raise ValueError(
+            f"labels에 중복 {ID_COL}: {labels[ID_COL][labels[ID_COL].duplicated()].iloc[0]}"
+        )
+    dup = folds[ID_COL].duplicated()
+    if dup.any():
+        raise ValueError(
+            f"folds에 중복 {ID_COL} {int(dup.sum())}개 (예: {folds[ID_COL][dup].iloc[0]})"
+        )
+    fold = pd.to_numeric(folds["fold"], errors="coerce")
+    if fold.isna().any() or (fold % 1 != 0).any():
+        raise ValueError("folds의 fold 값은 비어 있지 않은 정수여야 한다")
+    if n_folds is not None and not fold.between(0, n_folds - 1).all():
+        raise ValueError(f"fold 값이 0..{n_folds - 1} 범위를 벗어남: {sorted(fold.unique())}")
+    used = labels.loc[labels["source"].isin(["gt", "pseudo"]), ID_COL]
+    missing = used[~used.isin(folds[ID_COL])]
+    if len(missing):
+        raise ValueError(f"folds에 없는 학습 study {len(missing)}개 (예: {missing.iloc[0]})")
+
+
+def load_table(data_dir: Path, target_slices: int, n_folds: int | None = None) -> pd.DataFrame:
     """전체 study 학습 테이블 + `source`(gt / pseudo / none).
 
     labels.csv에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
@@ -54,6 +79,7 @@ def load_table(data_dir: Path, target_slices: int) -> pd.DataFrame:
         full = labels[list(LABELS)].notna().all(axis=1)
         labels["source"] = np.where(full, "gt", "none")
     folds = pd.read_csv(data_dir / "folds.csv", dtype={ID_COL: str})
+    validate_folds(labels, folds, n_folds)
     index = pd.read_csv(data_dir / "train_index.csv", dtype={ID_COL: str, "SeriesInstanceUID": str})
     table = build_study_table(labels, folds, index, target_slices=target_slices)
     return table.merge(labels[[ID_COL, "source"]], on=ID_COL, how="left")
@@ -127,7 +153,7 @@ def run(
     seed_everything(config["seed"])
     started = time.time()
 
-    full_table = load_table(data_dir, config["target_slices"])
+    full_table = load_table(data_dir, config["target_slices"], config["n_folds"])
     is_gt = (full_table["source"] == "gt").to_numpy()
     has_label = np.stack(full_table["label_mask"]).any(axis=1)
     train_pool = has_label if config.get("train_on", "full") == "any" else is_gt
