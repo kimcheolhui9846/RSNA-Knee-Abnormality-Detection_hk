@@ -40,3 +40,5 @@ Windows에서 스마트 앱 컨트롤이 `.venv`의 실행 파일·DLL을 막으
 | exp002 | exp001 + LLM pseudo-label 4,349 study 추가 학습 (평가는 정답 58) | 0.778 | 0.042 | MCL 0.587 | 0.834 | 공개 test 0.9분 | #13 |
 | exp003 | exp002 + 공개 LLM 라벨(soft) | (실패: Community GPU에서 CUDA 불가) | | | | | #14 |
 | exp004 | 공개 라벨 + DINOv2 ViT-S + 라벨별 attention + 2.5D | 0.703 | 0.054 | MCL 0.478 | 0.741 | 공개 test 0.9분 | #15 |
+| exp003r | exp002 모델 + 공개 LLM 라벨(v2), 보조 CV | 0.780 | 0.046 | Synovitis 0.673 | - | - | #17 |
+| exp005 | exp004 + lr↑·freeze↓·칸 풀링·질의 초기화 (백본 표현 붕괴) | 0.511 | 0.053 | Fracture 0.421 | - | - | #17 |
