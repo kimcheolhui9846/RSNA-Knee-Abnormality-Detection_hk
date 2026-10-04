@@ -143,3 +143,44 @@ def test_labels_file_option_selects_alternative_label_table(tmp_path: Path) -> N
     pseudo = chosen[chosen["source"] == "pseudo"]
     assert np.allclose(np.stack(pseudo["labels"]), 0.25)
     assert not np.allclose(np.stack(default[default["source"] == "pseudo"]["labels"]), 0.25)
+
+
+def test_check_device_fails_fast_on_pod_without_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-10-04 exp003: Community Pod에서 torch가 CUDA를 못 잡아 CPU로 4시간 돌다 시간 초과
+    from src.train import check_device
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setenv("RUNPOD_POD_ID", "abc123")
+    with pytest.raises(RuntimeError, match="CUDA"):
+        check_device(None)
+    monkeypatch.delenv("RUNPOD_POD_ID")
+    assert check_device(None) == "cpu"  # 로컬 테스트·smoke는 CPU 허용
+    assert check_device("cpu") == "cpu"
+
+
+def test_checkpoint_saved_after_each_fold(tmp_path: Path) -> None:
+    from safetensors.torch import load_file
+
+    data = tmp_path / "data"
+    make_synthetic_data(data, n_studies=8, depth=4, size=16)
+    config = {
+        "model": TINY,
+        "seed": 0,
+        "n_folds": 2,
+        "epochs": 1,
+        "batch_size": 4,
+        "lr": 1e-3,
+        "weight_decay": 0.0,
+        "depth": 4,
+        "size": 16,
+        "target_slices": 4,
+        "num_workers": 0,
+        "amp": False,
+    }
+    ckpt = tmp_path / "ckpt"
+    run(config, data_dir=data, out_dir=tmp_path / "out", device="cpu", checkpoint_dir=ckpt)
+
+    first = load_file(ckpt / "folds_00.safetensors")
+    assert all(k.startswith("fold0.") for k in first)  # fold 0까지 끝난 시점의 가중치
+    second = load_file(ckpt / "folds_01.safetensors")
+    assert any(k.startswith("fold1.") for k in second)
