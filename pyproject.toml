@@ -55,3 +55,5 @@ select = ["E", "F", "I", "B", "UP"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+# smoke 테스트가 fold마다 가중치를 쓰므로 통과한 테스트의 tmp_path는 남기지 않는다 (WSL /tmp는 RAM)
+tmp_path_retention_policy = "failed"

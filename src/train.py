@@ -16,6 +16,7 @@ pseudo-label은 노이즈가 있는 학습 신호일 뿐이다.
 
 import json
 import logging
+import math
 import os
 import random
 import time
@@ -127,14 +128,64 @@ def _loader(table: pd.DataFrame, data_dir: Path, cfg: dict, shuffle: bool) -> Da
 
 
 def _param_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
-    """학습할 파라미터만 넘긴다. config `backbone_lr`가 있으면 사전학습 백본(`encoder.`)은
-    그 lr로 따로 둔다 (헤드보다 작게)."""
+    """학습할 파라미터만 넘긴다.
+
+    - config `backbone_lr`가 있으면 사전학습 백본(`encoder.`)은 그 lr로 따로 둔다 (헤드보다 작게).
+    - config `no_decay_1d: true`면 bias·LayerNorm·임베딩·질의 같은 1차원 이하 파라미터와
+      `*_embed`·`queries`에는 weight decay를 걸지 않는다 (exp005~).
+    """
     trainable = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
-    if "backbone_lr" not in cfg:
-        return [{"params": [p for _, p in trainable]}]
-    backbone = [p for n, p in trainable if n.startswith("encoder.")]
-    head = [p for n, p in trainable if not n.startswith("encoder.")]
-    return [{"params": backbone, "lr": cfg["backbone_lr"]}, {"params": head, "lr": cfg["lr"]}]
+
+    def _no_decay(name: str, p: torch.nn.Parameter) -> bool:
+        return p.ndim <= 1 or name.endswith(("_embed", "queries", "_token"))
+
+    groups = []
+    split_lr = "backbone_lr" in cfg
+    for is_backbone in (True, False) if split_lr else (None,):
+        params = [
+            (n, p)
+            for n, p in trainable
+            if is_backbone is None or n.startswith("encoder.") == is_backbone
+        ]
+        lr = {} if is_backbone is None else {"lr": cfg["backbone_lr"] if is_backbone else cfg["lr"]}
+        if cfg.get("no_decay_1d"):
+            decay = [p for n, p in params if not _no_decay(n, p)]
+            no_decay = [p for n, p in params if _no_decay(n, p)]
+            groups += [{"params": decay, **lr}, {"params": no_decay, "weight_decay": 0.0, **lr}]
+        else:
+            groups.append({"params": [p for _, p in params], **lr})
+    return [g for g in groups if g["params"]]
+
+
+def _schedule(
+    opt: torch.optim.Optimizer, total: int, warmup: float
+) -> torch.optim.lr_scheduler.LRScheduler:
+    """cosine. config `warmup`(전체 step 대비 비율)이 있으면 그만큼 0에서 선형으로 올린다."""
+    if not warmup:
+        return torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total)
+    n_warm = max(1, int(total * warmup))
+
+    def factor(step: int) -> float:
+        if step < n_warm:
+            return (step + 1) / n_warm
+        progress = (step - n_warm) / max(1, total - n_warm)
+        return 0.5 * (1 + math.cos(math.pi * min(1.0, progress)))
+
+    return torch.optim.lr_scheduler.LambdaLR(opt, factor)
+
+
+def _init_bias_from_prior(model: torch.nn.Module, train_t: pd.DataFrame) -> None:
+    """출력 bias를 학습 라벨의 (결측 제외) 평균 확률의 logit으로 둔다.
+
+    첫 epoch을 사전확률 학습에 쓰지 않게 한다 (exp004는 epoch 1 loss가 사전확률 수준이었다)."""
+    out_b = getattr(model, "out_b", None)
+    if out_b is None:
+        return
+    y = np.stack(train_t["labels"])
+    m = np.stack(train_t["label_mask"])
+    prior = np.clip(np.where(m, y, 0).sum(0) / np.maximum(m.sum(0), 1), 1e-3, 1 - 1e-3)
+    with torch.no_grad():
+        out_b.copy_(torch.as_tensor(np.log(prior / (1 - prior)), dtype=out_b.dtype))
 
 
 def _pseudo_holdout(
@@ -158,10 +209,20 @@ def _pseudo_holdout(
     }
 
 
-def _predict(model: torch.nn.Module, loader: DataLoader, device: str, amp: bool) -> np.ndarray:
+def _amp_dtype(cfg: dict) -> torch.dtype:
+    return torch.bfloat16 if cfg.get("amp_dtype") == "bf16" else torch.float16
+
+
+def _predict(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: str,
+    amp: bool,
+    dtype: torch.dtype = torch.float16,
+) -> np.ndarray:
     model.eval()
     out = []
-    with torch.no_grad(), torch.autocast(device_type=device, enabled=amp):
+    with torch.no_grad(), torch.autocast(device_type=device, dtype=dtype, enabled=amp):
         for batch in loader:
             logits = model(batch["image"].to(device), batch["slot_mask"].to(device))
             out.append(torch.sigmoid(logits.float()).cpu().numpy())
@@ -177,25 +238,33 @@ def train_fold(
     heartbeat: Callable[[], None],
 ) -> torch.nn.Module:
     amp = cfg["amp"] and device == "cuda"
+    # bf16은 지수 범위가 fp32와 같아 loss scaling이 필요 없다 (exp005~). 기본은 fp16 + GradScaler
+    amp_dtype = _amp_dtype(cfg)
     model = build_model(cfg["model"]).to(device)
+    if cfg.get("init_bias_prior"):
+        _init_bias_from_prior(model, train_t)
     loader = _loader(train_t, data_dir, cfg, shuffle=True)
     opt = torch.optim.AdamW(
         _param_groups(model, cfg), lr=cfg["lr"], weight_decay=cfg["weight_decay"]
     )
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg["epochs"] * len(loader))
-    scaler = torch.amp.GradScaler(enabled=amp)
+    sched = _schedule(opt, cfg["epochs"] * len(loader), cfg.get("warmup", 0.0))
+    scaler = torch.amp.GradScaler(enabled=amp and amp_dtype == torch.float16)
+    grad_clip = cfg.get("grad_clip")
 
     for epoch in range(cfg["epochs"]):
         model.train()
         losses = []
         for batch in loader:
-            with torch.autocast(device_type=device, enabled=amp):
+            with torch.autocast(device_type=device, dtype=amp_dtype, enabled=amp):
                 logits = model(batch["image"].to(device), batch["slot_mask"].to(device))
             loss = masked_bce(
                 logits.float(), batch["labels"].to(device), batch["label_mask"].to(device)
             )
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
+            if grad_clip:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(opt)
             scaler.update()
             sched.step()
@@ -257,12 +326,14 @@ def run(
         model = train_fold(k, train_t, data_dir, config, device, heartbeat)
         is_val = (table["fold"] == k).to_numpy()
         val_t = table[is_val]
-        oof[is_val] = _predict(model, _loader(val_t, data_dir, config, shuffle=False), device, amp)
+        oof[is_val] = _predict(
+            model, _loader(val_t, data_dir, config, shuffle=False), device, amp, _amp_dtype(config)
+        )
         if eval_pseudo:
             p_val = (pseudo_table["fold"] == k).to_numpy()
             if p_val.any():
                 loader = _loader(pseudo_table[p_val], data_dir, config, shuffle=False)
-                oof_pseudo[p_val] = _predict(model, loader, device, amp)
+                oof_pseudo[p_val] = _predict(model, loader, device, amp, _amp_dtype(config))
         fold_macro, _ = macro_auc(np.stack(val_t["labels"]), oof[is_val])
         fold_scores.append(fold_macro)
         log.info(
