@@ -32,7 +32,7 @@ from src.data.dataset import KneeStudyDataset
 from src.data.study_table import SLOTS, build_study_table
 from src.losses import masked_bce
 from src.metrics import macro_auc
-from src.models.baseline import KneeBaseline
+from src.models import build_model
 
 log = logging.getLogger("train")
 
@@ -62,10 +62,27 @@ def load_table(data_dir: Path, target_slices: int, labels_file: str = "labels.cs
 
 def _loader(table: pd.DataFrame, data_dir: Path, cfg: dict, shuffle: bool) -> DataLoader:
     cache_root = data_dir / cfg.get("cache_dir", "cache")
-    ds = KneeStudyDataset(table, cache_root=cache_root, depth=cfg["depth"], size=cfg["size"])
+    ds = KneeStudyDataset(
+        table,
+        cache_root=cache_root,
+        depth=cfg["depth"],
+        size=cfg["size"],
+        slab=cfg.get("slab", 1),
+    )
     return DataLoader(
         ds, batch_size=cfg["batch_size"], shuffle=shuffle, num_workers=cfg["num_workers"]
     )
+
+
+def _param_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
+    """학습할 파라미터만 넘긴다. config `backbone_lr`가 있으면 사전학습 백본(`encoder.`)은
+    그 lr로 따로 둔다 (헤드보다 작게)."""
+    trainable = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    if "backbone_lr" not in cfg:
+        return [{"params": [p for _, p in trainable]}]
+    backbone = [p for n, p in trainable if n.startswith("encoder.")]
+    head = [p for n, p in trainable if not n.startswith("encoder.")]
+    return [{"params": backbone, "lr": cfg["backbone_lr"]}, {"params": head, "lr": cfg["lr"]}]
 
 
 def _predict(model: torch.nn.Module, loader: DataLoader, device: str, amp: bool) -> np.ndarray:
@@ -87,9 +104,11 @@ def train_fold(
     heartbeat: Callable[[], None],
 ) -> torch.nn.Module:
     amp = cfg["amp"] and device == "cuda"
-    model = KneeBaseline(**cfg["model"]).to(device)
+    model = build_model(cfg["model"]).to(device)
     loader = _loader(train_t, data_dir, cfg, shuffle=True)
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+    opt = torch.optim.AdamW(
+        _param_groups(model, cfg), lr=cfg["lr"], weight_decay=cfg["weight_decay"]
+    )
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg["epochs"] * len(loader))
     scaler = torch.amp.GradScaler(enabled=amp)
 
