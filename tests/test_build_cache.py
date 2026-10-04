@@ -62,6 +62,32 @@ def test_rerun_skips_existing_files(tmp_path: Path) -> None:
     assert path.stat().st_mtime_ns == mtime
 
 
+def test_rerun_with_different_size_rebuilds(tmp_path: Path) -> None:
+    _dataset(tmp_path / "data")
+    out = tmp_path / "cache"
+    build_cache(tmp_path / "data", out, size=16, workers=1)
+
+    second = build_cache(tmp_path / "data", out, size=8, workers=1)
+
+    row = second.set_index("SeriesInstanceUID").loc["c"]
+    assert row["status"] == "built"
+    assert np.load(out / row["path"]).shape == (4, 8, 8)
+
+
+def test_wrong_dtype_or_corrupt_cache_is_rebuilt(tmp_path: Path) -> None:
+    _dataset(tmp_path / "data")
+    out = tmp_path / "cache"
+    first = build_cache(tmp_path / "data", out, size=16, workers=1).set_index("SeriesInstanceUID")
+    np.save(out / first.loc["a", "path"], np.zeros((3, 16, 16), dtype=np.float32))
+    (out / first.loc["b", "path"]).write_bytes(b"not a npy file")
+
+    second = build_cache(tmp_path / "data", out, size=16, workers=1).set_index("SeriesInstanceUID")
+
+    assert second.loc["a", "status"] == "built"
+    assert second.loc["b", "status"] == "built"
+    assert np.load(out / second.loc["a", "path"]).dtype == np.uint8
+
+
 def test_parallel_matches_serial(tmp_path: Path) -> None:
     _dataset(tmp_path / "data")
     serial = build_cache(tmp_path / "data", tmp_path / "c1", size=16, workers=1)
