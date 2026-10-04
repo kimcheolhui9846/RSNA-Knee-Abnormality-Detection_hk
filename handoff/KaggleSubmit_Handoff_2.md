@@ -21,6 +21,12 @@
 - Kaggle 데이터셋 새 버전: `rsna-knee-code`(src에 dino 모델 포함), `rsna-knee-weights`(exp004 가중치 445 MB, sha `e377ad92…`)
 - 제출 `56822852`: 점수는 `experiments/exp004.md`에 기록
 
+### 추가 (2026-10-04, exp004 원인 분석 중 발견)
+- `src/infer.py`: `int(row.Fat_Suppression)`이 try 밖에 있어 숨은 test에 결측이 하나만 있어도 추론 전체가 멈출 수 있었다.
+  비어 있으면 `Fluid_Sensitive`(train에서 항상 같은 값)로 대신하고, 둘 다 없으면 그 시리즈만 건너뛰도록 고침. 테스트 추가 (88 passed).
+- 학습·추론 입력 일치 재확인: 캐시 경로와 DICOM 경로의 입력 텐서가 train 9 / test 3 study에서 비트 단위로 같고,
+  업로드 가중치로 RunPod OOF를 오차 ≤0.0012로 재현.
+
 ## 4. 미해결 문제
 - 비공개 test 1,300 study 기준 실행 시간은 Kaggle 제출 상세 화면에서 확인 필요 (ViT-S 5 fold × 96장/study)
 - 이전 꾸러미는 `kaggle_upload_exp001/`, `kaggle_upload_exp002/`에 보관 (git 무시)

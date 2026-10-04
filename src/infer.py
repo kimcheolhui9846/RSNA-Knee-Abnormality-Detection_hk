@@ -48,6 +48,21 @@ def load_ensemble(weights_path: Path, model_cfg: dict, device: str) -> list[torc
     return models
 
 
+def _fat_suppression(row) -> int | None:
+    """칸 구분용 `Fat_Suppression` (0/1).
+
+    비어 있으면 train에서 항상 같은 값인 `Fluid_Sensitive`로 대신하고,
+    둘 다 없거나 숫자가 아니면 None (그 시리즈는 건너뛴다)."""
+    for name in ("Fat_Suppression", "Fluid_Sensitive"):
+        try:
+            value = float(getattr(row, name))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not np.isnan(value):
+            return int(value)
+    return None
+
+
 class TestStudyDataset(Dataset):
     """study 하나 → (study_id, image (S, D, H, W) float 0~1, slot_mask (S,), 실패 여부)."""
 
@@ -72,15 +87,21 @@ class TestStudyDataset(Dataset):
         volumes, rows = {}, []
         for row in self.by_study.get(sid, pd.DataFrame()).itertuples():
             key = str(row.SeriesInstanceUID)
+            fat_sup = _fat_suppression(row)
+            if (
+                fat_sup is None
+            ):  # 칸을 정할 수 없으면 읽지 않고 건너뛴다 (예외로 추론 전체가 멈추지 않게)
+                log.warning(
+                    "series 메타데이터 결측 %s/%s: Fat_Suppression·Fluid_Sensitive", sid, key
+                )
+                continue
             try:
                 vol = preprocess_series(load_series(self.series_root / sid / key), size=size)
             except Exception as e:  # noqa: BLE001 — 시리즈 하나가 망가져도 나머지로 예측한다
                 log.warning("series 읽기 실패 %s/%s: %r", sid, key, e)
                 continue
             volumes[key] = vol
-            rows.append(
-                (sid, key, row.Anatomical_Plane, int(row.Fat_Suppression), len(vol), "built", key)
-            )
+            rows.append((sid, key, row.Anatomical_Plane, fat_sup, len(vol), "built", key))
 
         if rows:
             index = pd.DataFrame(
