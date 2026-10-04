@@ -1,0 +1,27 @@
+# exp002 — exp001 모델 + report pseudo-label(LLM) 4,349 study 추가 학습. 평가는 정답 58 study OOF
+seed: 42
+n_folds: 5
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  embed_dim: 256
+  dropout: 0.2
+
+# 데이터: HF 데이터셋 cheolhhh9846/rsna-knee-cache256 (캐시가 루트에, labels.csv·folds.csv 동봉)
+cache_dir: "."
+train_on: any                 # 정답 + pseudo (pseudo의 판단 보류 칸은 마스크로 제외)
+
+depth: 16
+size: 256
+target_slices: 30
+
+# 학습 study가 58 → 약 3,500(fold당)이라 epoch을 줄인다.
+# batch는 exp001과 같은 2: study 하나가 6칸 × 16장 = 96장이라 batch 8이면 768장이 한 번에 백본을 지나
+# 24 GB GPU에서 메모리가 부족할 가능성이 크다 (exp001은 192장으로 동작 확인)
+epochs: 4
+batch_size: 2
+lr: 3.0e-4
+weight_decay: 1.0e-2
+amp: true
+num_workers: 8

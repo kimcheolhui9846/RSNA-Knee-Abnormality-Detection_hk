@@ -1,10 +1,15 @@
 """study 단위 5-fold 교차검증 학습 (exp001~).
 
 데이터 폴더 구성 (`rce upload-data`로 올리는 폴더와 같다):
-    labels.csv        StudyInstanceUID + 12개 라벨 (결측은 비움)
+    labels.csv        StudyInstanceUID + 12개 라벨 (결측은 비움) [+ source: gt / pseudo / none]
     folds.csv         StudyInstanceUID, fold, labeled   (`python -m src.folds`로 생성)
     train_index.csv   캐시 인덱스 (`python -m src.data.build_cache`)
-    cache/<study>/<series>.npy
+    <cache_dir>/<study>/<series>.npy   (config `cache_dir`, 기본 "cache")
+
+config `train_on`: "full"(기본) = 정답 study만 학습
+                   "any" = 라벨이 하나라도 있는 study 전부(pseudo 포함)
+평가(OOF·macro AUC)는 언제나 정답(gt) study만으로 한다.
+pseudo-label은 노이즈가 있는 학습 신호일 뿐이다.
 
 출력 (`out_dir`): model.safetensors (fold별 가중치, 키 접두사 `fold{k}.`), oof.csv, metrics.json
 """
@@ -39,19 +44,50 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_labeled_table(data_dir: Path, target_slices: int) -> pd.DataFrame:
-    """12개 라벨이 모두 있는 study만 남긴 학습 테이블."""
+def validate_folds(labels: pd.DataFrame, folds: pd.DataFrame, n_folds: int | None = None) -> None:
+    """학습에 쓰는 study(source가 gt / pseudo)가 folds에 정확히 한 번씩, 정수 fold로 있는지 확인.
+
+    inner merge는 빠진 study를 조용히 학습에서 빼고 중복 study를 두 번 넣으므로 여기서 먼저 막는다.
+    """
+    if labels[ID_COL].duplicated().any():
+        raise ValueError(
+            f"labels에 중복 {ID_COL}: {labels[ID_COL][labels[ID_COL].duplicated()].iloc[0]}"
+        )
+    dup = folds[ID_COL].duplicated()
+    if dup.any():
+        raise ValueError(
+            f"folds에 중복 {ID_COL} {int(dup.sum())}개 (예: {folds[ID_COL][dup].iloc[0]})"
+        )
+    fold = pd.to_numeric(folds["fold"], errors="coerce")
+    if fold.isna().any() or (fold % 1 != 0).any():
+        raise ValueError("folds의 fold 값은 비어 있지 않은 정수여야 한다")
+    if n_folds is not None and not fold.between(0, n_folds - 1).all():
+        raise ValueError(f"fold 값이 0..{n_folds - 1} 범위를 벗어남: {sorted(fold.unique())}")
+    used = labels.loc[labels["source"].isin(["gt", "pseudo"]), ID_COL]
+    missing = used[~used.isin(folds[ID_COL])]
+    if len(missing):
+        raise ValueError(f"folds에 없는 학습 study {len(missing)}개 (예: {missing.iloc[0]})")
+
+
+def load_table(data_dir: Path, target_slices: int, n_folds: int | None = None) -> pd.DataFrame:
+    """전체 study 학습 테이블 + `source`(gt / pseudo / none).
+
+    labels.csv에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
+    """
     labels = pd.read_csv(data_dir / "labels.csv", dtype={ID_COL: str})
+    if "source" not in labels.columns:
+        full = labels[list(LABELS)].notna().all(axis=1)
+        labels["source"] = np.where(full, "gt", "none")
     folds = pd.read_csv(data_dir / "folds.csv", dtype={ID_COL: str})
+    validate_folds(labels, folds, n_folds)
     index = pd.read_csv(data_dir / "train_index.csv", dtype={ID_COL: str, "SeriesInstanceUID": str})
     table = build_study_table(labels, folds, index, target_slices=target_slices)
-    return table[np.stack(table["label_mask"]).all(axis=1)].reset_index(drop=True)
+    return table.merge(labels[[ID_COL, "source"]], on=ID_COL, how="left")
 
 
 def _loader(table: pd.DataFrame, data_dir: Path, cfg: dict, shuffle: bool) -> DataLoader:
-    ds = KneeStudyDataset(
-        table, cache_root=data_dir / "cache", depth=cfg["depth"], size=cfg["size"]
-    )
+    cache_root = data_dir / cfg.get("cache_dir", "cache")
+    ds = KneeStudyDataset(table, cache_root=cache_root, depth=cfg["depth"], size=cfg["size"])
     return DataLoader(
         ds, batch_size=cfg["batch_size"], shuffle=shuffle, num_workers=cfg["num_workers"]
     )
@@ -117,21 +153,38 @@ def run(
     seed_everything(config["seed"])
     started = time.time()
 
-    table = load_labeled_table(data_dir, config["target_slices"])
-    log.info("labeled studies: %d, device: %s", len(table), device)
+    full_table = load_table(data_dir, config["target_slices"], config["n_folds"])
+    is_gt = (full_table["source"] == "gt").to_numpy()
+    has_label = np.stack(full_table["label_mask"]).any(axis=1)
+    train_pool = has_label if config.get("train_on", "full") == "any" else is_gt
+    table = full_table[is_gt].reset_index(drop=True)  # 평가 대상
+    log.info(
+        "eval (gt) studies: %d, train pool: %d (train_on=%s), device: %s",
+        len(table),
+        int(train_pool.sum()),
+        config.get("train_on", "full"),
+        device,
+    )
 
     oof = np.full((len(table), len(LABELS)), np.nan, dtype=np.float32)
     weights: dict[str, torch.Tensor] = {}
     fold_scores: list[float] = []
     amp = config["amp"] and device == "cuda"
     for k in range(config["n_folds"]):
+        train_t = full_table[train_pool & (full_table["fold"] != k).to_numpy()]
+        model = train_fold(k, train_t, data_dir, config, device, heartbeat)
         is_val = (table["fold"] == k).to_numpy()
-        model = train_fold(k, table[~is_val], data_dir, config, device, heartbeat)
         val_t = table[is_val]
         oof[is_val] = _predict(model, _loader(val_t, data_dir, config, shuffle=False), device, amp)
         fold_macro, _ = macro_auc(np.stack(val_t["labels"]), oof[is_val])
         fold_scores.append(fold_macro)
-        log.info("fold %d val macro AUC %.4f (n=%d)", k, fold_macro, int(is_val.sum()))
+        log.info(
+            "fold %d val macro AUC %.4f (val gt n=%d, train n=%d)",
+            k,
+            fold_macro,
+            int(is_val.sum()),
+            len(train_t),
+        )
         weights.update(
             {f"fold{k}.{n}": t.detach().cpu().contiguous() for n, t in model.state_dict().items()}
         )
@@ -149,6 +202,7 @@ def run(
         "fold_macro_auc": fold_scores,
         "fold_std": float(np.nanstd(fold_scores)),
         "n_studies": len(table),
+        "n_train_studies": int(train_pool.sum()),
         "n_slots": len(SLOTS),
         "elapsed_sec": round(time.time() - started, 1),
         "device": device,
@@ -162,32 +216,44 @@ def run(
 
 
 def make_synthetic_data(
-    data_dir: Path, n_studies: int = 12, depth: int = 6, size: int = 32, n_folds: int = 2
+    data_dir: Path,
+    n_studies: int = 12,
+    depth: int = 6,
+    size: int = 32,
+    n_folds: int = 2,
+    n_pseudo: int = 0,
+    cache_subdir: str = "cache",
 ) -> None:
-    """실데이터 없이 파이프라인을 끝까지 돌려 보기 위한 합성 데이터 (테스트·smoke-test용)."""
+    """실데이터 없이 파이프라인을 끝까지 돌려 보기 위한 합성 데이터 (테스트·smoke-test용).
+
+    `n_studies`개는 정답(gt), `n_pseudo`개는 일부 라벨이 NaN인 pseudo-label study다.
+    """
     rng = np.random.default_rng(0)
     data_dir = Path(data_dir)
-    ids = [f"study{i:03d}" for i in range(n_studies)]
-    y = rng.integers(0, 2, size=(n_studies, len(LABELS))).astype(float)
+    gt_ids = [f"study{i:03d}" for i in range(n_studies)]
+    pseudo_ids = [f"pseudo{i:03d}" for i in range(n_pseudo)]
+    ids = gt_ids + pseudo_ids
+    y = rng.integers(0, 2, size=(len(ids), len(LABELS))).astype(float)
     y[0], y[1] = 0.0, 1.0
+    y[n_studies:][rng.random((n_pseudo, len(LABELS))) < 0.2] = np.nan  # LLM 판단 보류
     labels = pd.DataFrame(y, columns=list(LABELS))
     labels.insert(0, ID_COL, ids)
+    labels["source"] = ["gt"] * n_studies + ["pseudo"] * n_pseudo
     data_dir.mkdir(parents=True, exist_ok=True)
     labels.to_csv(data_dir / "labels.csv", index=False)
     pd.DataFrame(
-        {ID_COL: ids, "fold": [i % n_folds for i in range(n_studies)], "labeled": True}
+        {ID_COL: ids, "fold": [i % n_folds for i in range(len(ids))], "labeled": True}
     ).to_csv(data_dir / "folds.csv", index=False)
 
+    cache = data_dir / cache_subdir
     rows = []
     for i, sid in enumerate(ids):
         for j, (plane, fs) in enumerate(SLOTS):
             if j == len(SLOTS) - 1 and i % 2:  # 일부 study는 마지막 칸이 없다
                 continue
             rel = f"{sid}/s{j}.npy"
-            (data_dir / "cache" / sid).mkdir(parents=True, exist_ok=True)
-            np.save(
-                data_dir / "cache" / rel, rng.integers(0, 256, (depth, size, size), dtype=np.uint8)
-            )
+            (cache / sid).mkdir(parents=True, exist_ok=True)
+            np.save(cache / rel, rng.integers(0, 256, (depth, size, size), dtype=np.uint8))
             rows.append((sid, f"s{j}", plane, fs, depth, "built", rel))
     pd.DataFrame(
         rows,
