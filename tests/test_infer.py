@@ -99,3 +99,38 @@ def test_fold_count_is_read_from_weights(tmp_path: Path) -> None:
             num_workers=0,
         )
         assert len(sub) == 3
+
+
+def test_predict_with_dino_attn_and_slab(tmp_path: Path) -> None:
+    # exp004 모델(DINOv2 계열 + 라벨별 attention, 2.5D 입력)도 같은 경로로 추론한다
+    from src.models import build_model
+
+    dino = {
+        "name": "dino_attn",
+        "backbone": "vit_tiny_patch16_224",
+        "pretrained": False,
+        "img_size": 32,
+        "freeze_blocks": 0,
+        "n_heads": 2,
+        "dropout": 0.0,
+    }
+    _test_dataset(tmp_path / "data")
+    torch.manual_seed(0)
+    state = {}
+    for k in range(2):
+        state.update(
+            {f"fold{k}.{n}": t.contiguous() for n, t in build_model(dino).state_dict().items()}
+        )
+    save_file(state, str(tmp_path / "w.safetensors"))
+    config = {"model": dino, "depth": 4, "size": 32, "target_slices": 4, "slab": 3}
+
+    sub = predict(
+        tmp_path / "data",
+        tmp_path / "w.safetensors",
+        config,
+        tmp_path / "s.csv",
+        device="cpu",
+        num_workers=0,
+    )
+    assert len(sub) == 3
+    assert sub[list(LABELS)].apply(lambda c: c.between(0, 1)).all().all()
