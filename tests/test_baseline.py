@@ -186,6 +186,35 @@ def test_checkpoint_saved_after_each_fold(tmp_path: Path) -> None:
     assert any(k.startswith("fold1.") for k in second)
 
 
+def test_pseudo_holdout_metric_uses_held_out_pseudo_studies(tmp_path: Path) -> None:
+    # 정답 58개 CV는 작고 치우쳐 있다 → fold k에서 학습에 안 쓴 pseudo study로 보조 CV를 낸다
+    data = tmp_path / "data"
+    make_synthetic_data(data, n_studies=8, depth=4, size=16, n_pseudo=12)
+    config = {
+        "model": TINY,
+        "seed": 0,
+        "n_folds": 2,
+        "epochs": 1,
+        "batch_size": 4,
+        "lr": 1e-3,
+        "weight_decay": 0.0,
+        "depth": 4,
+        "size": 16,
+        "target_slices": 4,
+        "num_workers": 0,
+        "amp": False,
+        "train_on": "any",
+        "eval_pseudo": True,
+    }
+    result = run(config, data_dir=data, out_dir=tmp_path / "out", device="cpu")
+
+    assert "pseudo_holdout_auc" in result
+    assert set(result["pseudo_holdout_per_label"]) == set(LABELS)
+    oof_p = pd.read_csv(tmp_path / "out" / "oof_pseudo.csv")
+    assert len(oof_p) == 12
+    assert oof_p[ID_COL].str.startswith("pseudo").all()
+
+
 def _labels_and_folds() -> tuple[pd.DataFrame, pd.DataFrame]:
     labels = pd.DataFrame(
         {ID_COL: ["g0", "g1", "p0", "p1", "n0"], "source": ["gt", "gt", "pseudo", "pseudo", "none"]}
