@@ -22,12 +22,18 @@
 ## 3. 결과
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 86 passed, 2 skipped (torch 환경) / 49 passed, 6 skipped (CI와 같은 torch 없는 환경)
 - 새 테스트: 칸 풀링 마스크 불변·출력 변화·빈 배치, 질의 초기화 비균등, param group 분리·no-decay, warmup 스케줄, bias 사전확률 초기화, exp005 옵션 end-to-end, smoke(모든 config)
-- RunPod 결과: (실행 후 기록)
+- RunPod 결과 (상세는 `experiments/exp005.md`)
+  - exp003r `20261004-140529-c875fe`: 정답 58 CV **0.780** (exp002 0.778), 보조 CV 0.801 → 라벨 교체는 성능에 거의 영향 없음
+  - exp005 `20261004-140439-390970`: CV **0.511**, 보조 CV 0.549 → **실패**. 가중치를 받아 층별로 보니 백본 뒤쪽 블록(7–11)이
+    모든 입력을 같은 특징으로 보내는 표현 붕괴. loss가 사전확률 수준(0.62)에서 내려가지 않음
+  - exp002 + exp003r rank 평균 앙상블: 0.798 (exp002 대비 +0.020, CI [−0.001, +0.044])
+  - 비용: exp003r 약 $1.35, exp005 약 $2.55
 
 ## 4. 미해결 문제
 - freeze 2 + batch 2(96장 × 2)의 GPU 메모리는 로컬에서 확인 불가 (로컬 GPU 사용 금지). 추정 약 12–14 GB로 24 GB 4090에 들어감
 - Kaggle 추론(`feat/submit-v2`)은 fp16 autocast. bf16으로 학습한 가중치를 fp16으로 추론해도 되는지 제출 전 OOF 재현으로 확인 필요
 
 ## 5. 다음 작업자가 할 일
-1. 두 run 결과로 `experiments/exp005.md` 결과 절, README 표 갱신
-2. exp005 ≥ exp003r면 DINOv2 경로 유지(제출 후보), 아니면 b0 경로 강화
+1. exp005 설정은 제출하지 않는다 (붕괴)
+2. DINOv2를 다시 시도하면 한 번에 하나씩: exp004 백본 설정(lr 3e-5, freeze 6) + 헤드 수정만 → 그다음 layer-wise decay와 함께 백본 lr 조정
+3. 당장의 제출 후보: exp002 + exp003r rank 평균 앙상블 (b0 두 개, Kaggle 추론 시간 약 2배)
