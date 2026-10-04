@@ -106,6 +106,27 @@ def _param_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
     return [{"params": backbone, "lr": cfg["backbone_lr"]}, {"params": head, "lr": cfg["lr"]}]
 
 
+def _pseudo_holdout(
+    pseudo_table: pd.DataFrame, oof_pseudo: np.ndarray, out_dir: Path, enabled: bool
+) -> dict:
+    """pseudo-label(0.5 기준 이진화, 결측 제외)에 대한 OOF macro AUC + `oof_pseudo.csv`."""
+    if not enabled or len(pseudo_table) == 0:
+        return {}
+    soft = np.stack(pseudo_table["labels"]).astype(np.float32)
+    target = np.where(np.isnan(soft), np.nan, (soft >= 0.5).astype(np.float32))
+    macro, per_label = macro_auc(target, oof_pseudo)
+    df = pd.DataFrame(oof_pseudo, columns=list(LABELS))
+    df.insert(0, "fold", pseudo_table["fold"].to_numpy())
+    df.insert(0, ID_COL, pseudo_table[ID_COL].to_numpy())
+    df.to_csv(out_dir / "oof_pseudo.csv", index=False)
+    log.info("pseudo-holdout macro AUC %.4f (n=%d)", macro, len(pseudo_table))
+    return {
+        "pseudo_holdout_auc": macro,
+        "pseudo_holdout_per_label": per_label,
+        "n_pseudo_holdout": len(pseudo_table),
+    }
+
+
 def _predict(model: torch.nn.Module, loader: DataLoader, device: str, amp: bool) -> np.ndarray:
     model.eval()
     out = []
@@ -189,6 +210,11 @@ def run(
     )
 
     oof = np.full((len(table), len(LABELS)), np.nan, dtype=np.float32)
+    # 보조 CV: fold k 학습에 쓰지 않은 pseudo study (정답 58개보다 75배 많아 분산이 작다)
+    eval_pseudo = bool(config.get("eval_pseudo", False))
+    pseudo_table = full_table[(full_table["source"] == "pseudo").to_numpy() & has_label]
+    pseudo_table = pseudo_table.reset_index(drop=True)
+    oof_pseudo = np.full((len(pseudo_table), len(LABELS)), np.nan, dtype=np.float32)
     weights: dict[str, torch.Tensor] = {}
     fold_scores: list[float] = []
     amp = config["amp"] and device == "cuda"
@@ -198,6 +224,11 @@ def run(
         is_val = (table["fold"] == k).to_numpy()
         val_t = table[is_val]
         oof[is_val] = _predict(model, _loader(val_t, data_dir, config, shuffle=False), device, amp)
+        if eval_pseudo:
+            p_val = (pseudo_table["fold"] == k).to_numpy()
+            if p_val.any():
+                loader = _loader(pseudo_table[p_val], data_dir, config, shuffle=False)
+                oof_pseudo[p_val] = _predict(model, loader, device, amp)
         fold_macro, _ = macro_auc(np.stack(val_t["labels"]), oof[is_val])
         fold_scores.append(fold_macro)
         log.info(
@@ -229,6 +260,7 @@ def run(
         "n_studies": len(table),
         "n_train_studies": int(train_pool.sum()),
         "n_slots": len(SLOTS),
+        **_pseudo_holdout(pseudo_table, oof_pseudo, out_dir, eval_pseudo),
         "elapsed_sec": round(time.time() - started, 1),
         "device": device,
         "config": config,
