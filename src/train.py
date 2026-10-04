@@ -1,0 +1,203 @@
+"""study 단위 5-fold 교차검증 학습 (exp001~).
+
+데이터 폴더 구성 (`rce upload-data`로 올리는 폴더와 같다):
+    labels.csv        StudyInstanceUID + 12개 라벨 (결측은 비움)
+    folds.csv         StudyInstanceUID, fold, labeled   (`python -m src.folds`로 생성)
+    train_index.csv   캐시 인덱스 (`python -m src.data.build_cache`)
+    cache/<study>/<series>.npy
+
+출력 (`out_dir`): model.safetensors (fold별 가중치, 키 접두사 `fold{k}.`), oof.csv, metrics.json
+"""
+
+import json
+import logging
+import random
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+from safetensors.torch import save_file
+from torch.utils.data import DataLoader
+
+from src.constants import ID_COL, LABELS
+from src.data.dataset import KneeStudyDataset
+from src.data.study_table import SLOTS, build_study_table
+from src.losses import masked_bce
+from src.metrics import macro_auc
+from src.models.baseline import KneeBaseline
+
+log = logging.getLogger("train")
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def load_labeled_table(data_dir: Path, target_slices: int) -> pd.DataFrame:
+    """12개 라벨이 모두 있는 study만 남긴 학습 테이블."""
+    labels = pd.read_csv(data_dir / "labels.csv", dtype={ID_COL: str})
+    folds = pd.read_csv(data_dir / "folds.csv", dtype={ID_COL: str})
+    index = pd.read_csv(data_dir / "train_index.csv", dtype={ID_COL: str, "SeriesInstanceUID": str})
+    table = build_study_table(labels, folds, index, target_slices=target_slices)
+    return table[np.stack(table["label_mask"]).all(axis=1)].reset_index(drop=True)
+
+
+def _loader(table: pd.DataFrame, data_dir: Path, cfg: dict, shuffle: bool) -> DataLoader:
+    ds = KneeStudyDataset(
+        table, cache_root=data_dir / "cache", depth=cfg["depth"], size=cfg["size"]
+    )
+    return DataLoader(
+        ds, batch_size=cfg["batch_size"], shuffle=shuffle, num_workers=cfg["num_workers"]
+    )
+
+
+def _predict(model: torch.nn.Module, loader: DataLoader, device: str, amp: bool) -> np.ndarray:
+    model.eval()
+    out = []
+    with torch.no_grad(), torch.autocast(device_type=device, enabled=amp):
+        for batch in loader:
+            logits = model(batch["image"].to(device), batch["slot_mask"].to(device))
+            out.append(torch.sigmoid(logits.float()).cpu().numpy())
+    return np.concatenate(out)
+
+
+def train_fold(
+    fold: int,
+    train_t: pd.DataFrame,
+    data_dir: Path,
+    cfg: dict,
+    device: str,
+    heartbeat: Callable[[], None],
+) -> torch.nn.Module:
+    amp = cfg["amp"] and device == "cuda"
+    model = KneeBaseline(**cfg["model"]).to(device)
+    loader = _loader(train_t, data_dir, cfg, shuffle=True)
+    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg["epochs"] * len(loader))
+    scaler = torch.amp.GradScaler(enabled=amp)
+
+    for epoch in range(cfg["epochs"]):
+        model.train()
+        losses = []
+        for batch in loader:
+            with torch.autocast(device_type=device, enabled=amp):
+                logits = model(batch["image"].to(device), batch["slot_mask"].to(device))
+            loss = masked_bce(
+                logits.float(), batch["labels"].to(device), batch["label_mask"].to(device)
+            )
+            opt.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+            sched.step()
+            losses.append(loss.item())
+            heartbeat()
+        log.info("fold %d epoch %d/%d loss %.4f", fold, epoch + 1, cfg["epochs"], np.mean(losses))
+    return model
+
+
+def run(
+    config: dict,
+    data_dir: Path,
+    out_dir: Path,
+    device: str | None = None,
+    heartbeat: Callable[[], None] | None = None,
+) -> dict:
+    """fold마다 학습 → 검증 fold 예측(OOF) → 전체 OOF로 macro AUC."""
+    data_dir, out_dir = Path(data_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    heartbeat = heartbeat or (lambda: None)
+    seed_everything(config["seed"])
+    started = time.time()
+
+    table = load_labeled_table(data_dir, config["target_slices"])
+    log.info("labeled studies: %d, device: %s", len(table), device)
+
+    oof = np.full((len(table), len(LABELS)), np.nan, dtype=np.float32)
+    weights: dict[str, torch.Tensor] = {}
+    fold_scores: list[float] = []
+    amp = config["amp"] and device == "cuda"
+    for k in range(config["n_folds"]):
+        is_val = (table["fold"] == k).to_numpy()
+        model = train_fold(k, table[~is_val], data_dir, config, device, heartbeat)
+        val_t = table[is_val]
+        oof[is_val] = _predict(model, _loader(val_t, data_dir, config, shuffle=False), device, amp)
+        fold_macro, _ = macro_auc(np.stack(val_t["labels"]), oof[is_val])
+        fold_scores.append(fold_macro)
+        log.info("fold %d val macro AUC %.4f (n=%d)", k, fold_macro, int(is_val.sum()))
+        weights.update(
+            {f"fold{k}.{n}": t.detach().cpu().contiguous() for n, t in model.state_dict().items()}
+        )
+
+    macro, per_label = macro_auc(np.stack(table["labels"]), oof)
+    oof_df = pd.DataFrame(oof, columns=list(LABELS))
+    oof_df.insert(0, "fold", table["fold"].to_numpy())
+    oof_df.insert(0, ID_COL, table[ID_COL].to_numpy())
+    oof_df.to_csv(out_dir / "oof.csv", index=False)
+    save_file(weights, str(out_dir / "model.safetensors"))
+
+    result = {
+        "macro_auc": macro,
+        "per_label_auc": per_label,
+        "fold_macro_auc": fold_scores,
+        "fold_std": float(np.nanstd(fold_scores)),
+        "n_studies": len(table),
+        "n_slots": len(SLOTS),
+        "elapsed_sec": round(time.time() - started, 1),
+        "device": device,
+        "config": config,
+    }
+    (out_dir / "metrics.json").write_text(
+        json.dumps(result, indent=2, default=float), encoding="utf-8"
+    )
+    log.info("OOF macro AUC %.4f, fold std %.4f", macro, result["fold_std"])
+    return result
+
+
+def make_synthetic_data(
+    data_dir: Path, n_studies: int = 12, depth: int = 6, size: int = 32, n_folds: int = 2
+) -> None:
+    """실데이터 없이 파이프라인을 끝까지 돌려 보기 위한 합성 데이터 (테스트·smoke-test용)."""
+    rng = np.random.default_rng(0)
+    data_dir = Path(data_dir)
+    ids = [f"study{i:03d}" for i in range(n_studies)]
+    y = rng.integers(0, 2, size=(n_studies, len(LABELS))).astype(float)
+    y[0], y[1] = 0.0, 1.0
+    labels = pd.DataFrame(y, columns=list(LABELS))
+    labels.insert(0, ID_COL, ids)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    labels.to_csv(data_dir / "labels.csv", index=False)
+    pd.DataFrame(
+        {ID_COL: ids, "fold": [i % n_folds for i in range(n_studies)], "labeled": True}
+    ).to_csv(data_dir / "folds.csv", index=False)
+
+    rows = []
+    for i, sid in enumerate(ids):
+        for j, (plane, fs) in enumerate(SLOTS):
+            if j == len(SLOTS) - 1 and i % 2:  # 일부 study는 마지막 칸이 없다
+                continue
+            rel = f"{sid}/s{j}.npy"
+            (data_dir / "cache" / sid).mkdir(parents=True, exist_ok=True)
+            np.save(
+                data_dir / "cache" / rel, rng.integers(0, 256, (depth, size, size), dtype=np.uint8)
+            )
+            rows.append((sid, f"s{j}", plane, fs, depth, "built", rel))
+    pd.DataFrame(
+        rows,
+        columns=[
+            ID_COL,
+            "SeriesInstanceUID",
+            "Anatomical_Plane",
+            "Fat_Suppression",
+            "n_slices",
+            "status",
+            "path",
+        ],
+    ).to_csv(data_dir / "train_index.csv", index=False)

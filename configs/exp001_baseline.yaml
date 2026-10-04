@@ -1,0 +1,21 @@
+# exp001 — 로드맵 1단계: 2D ImageNet 백본 + 슬라이스/칸/study 집계, 라벨 있는 58 study로 5-fold CV
+seed: 42
+n_folds: 5
+
+model:
+  backbone: efficientnet_b0   # timm 이름, in_chans=1로 흑백 입력
+  pretrained: true            # ImageNet 가중치 (Pod에서 HF Hub로 받음)
+  embed_dim: 256
+  dropout: 0.2
+
+# 입력: 6칸(방향 × 지방 억제) × depth장 × size², 없는 칸은 slot_mask로 제외
+depth: 16
+size: 256
+target_slices: 30             # 같은 칸에 시리즈가 여럿이면 슬라이스 수가 이 값에 가까운 것
+
+epochs: 15
+batch_size: 2
+lr: 3.0e-4
+weight_decay: 1.0e-2
+amp: true
+num_workers: 4

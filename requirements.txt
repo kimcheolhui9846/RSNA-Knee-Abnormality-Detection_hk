@@ -1,0 +1,9 @@
+# RunPod Pod에서 train.py 실행에 필요한 패키지 (runpod-hf-harness의 start_up.sh가 pip로 설치)
+# torch는 템플릿 이미지(runpod/pytorch)에 있으므로 넣지 않는다. 로컬 개발은 pyproject.toml + uv를 쓴다.
+huggingface_hub
+safetensors
+numpy
+pandas
+scikit-learn
+pyyaml
+timm
