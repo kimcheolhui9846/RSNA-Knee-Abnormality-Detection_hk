@@ -132,12 +132,16 @@ def train_model(cfg: Config) -> Path:
         config.update(
             n_folds=2, epochs=1, batch_size=2, depth=4, size=32, target_slices=4, num_workers=0
         )
-        config["model"] = {
-            "backbone": "resnet18",
-            "pretrained": False,
-            "embed_dim": 32,
-            "dropout": 0.0,
-        }
+        if config.get("model", {}).get("name", "baseline") == "baseline":
+            config["model"] = {
+                "backbone": "resnet18",
+                "pretrained": False,
+                "embed_dim": 32,
+                "dropout": 0.0,
+            }
+        else:
+            # 모델 종류는 config 그대로 두고 크기만 줄인다 (가중치 다운로드 없음)
+            config["model"] = {**config["model"], "pretrained": False, "img_size": 28}
 
     result = run(
         config,
