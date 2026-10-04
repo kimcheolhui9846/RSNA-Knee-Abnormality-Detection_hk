@@ -44,12 +44,13 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_table(data_dir: Path, target_slices: int) -> pd.DataFrame:
+def load_table(data_dir: Path, target_slices: int, labels_file: str = "labels.csv") -> pd.DataFrame:
     """전체 study 학습 테이블 + `source`(gt / pseudo / none).
 
-    labels.csv에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
+    `labels_file`로 같은 데이터셋 안의 다른 라벨 표를 고른다 (config `labels_file`).
+    라벨 표에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
     """
-    labels = pd.read_csv(data_dir / "labels.csv", dtype={ID_COL: str})
+    labels = pd.read_csv(data_dir / labels_file, dtype={ID_COL: str})
     if "source" not in labels.columns:
         full = labels[list(LABELS)].notna().all(axis=1)
         labels["source"] = np.where(full, "gt", "none")
@@ -127,7 +128,9 @@ def run(
     seed_everything(config["seed"])
     started = time.time()
 
-    full_table = load_table(data_dir, config["target_slices"])
+    full_table = load_table(
+        data_dir, config["target_slices"], config.get("labels_file", "labels.csv")
+    )
     is_gt = (full_table["source"] == "gt").to_numpy()
     has_label = np.stack(full_table["label_mask"]).any(axis=1)
     train_pool = has_label if config.get("train_on", "full") == "any" else is_gt

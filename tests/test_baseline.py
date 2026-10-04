@@ -10,7 +10,7 @@ from src.constants import ID_COL, LABELS  # noqa: E402
 from src.data.study_table import SLOTS  # noqa: E402
 from src.losses import masked_bce  # noqa: E402
 from src.models.baseline import KneeBaseline  # noqa: E402
-from src.train import make_synthetic_data, run  # noqa: E402
+from src.train import load_table, make_synthetic_data, run  # noqa: E402
 
 TINY = {"backbone": "resnet18", "pretrained": False, "embed_dim": 32, "dropout": 0.0}
 
@@ -127,3 +127,19 @@ def test_pseudo_labels_are_trained_on_but_only_ground_truth_is_evaluated(tmp_pat
     oof = pd.read_csv(tmp_path / "out" / "oof.csv")
     assert len(oof) == 12
     assert not oof[ID_COL].str.startswith("pseudo").any()
+
+
+def test_labels_file_option_selects_alternative_label_table(tmp_path: Path) -> None:
+    # 같은 데이터셋에 라벨 파일을 여러 개 두고 실험마다 고른다 (exp002 재현성 유지)
+    data = tmp_path / "data"
+    make_synthetic_data(data, n_studies=6, depth=4, size=16, n_pseudo=4)
+    alt = pd.read_csv(data / "labels.csv")
+    alt.loc[alt["source"] == "pseudo", list(LABELS)] = 0.25  # soft label
+    alt.to_csv(data / "labels_v2.csv", index=False)
+
+    default = load_table(data, target_slices=4)
+    chosen = load_table(data, target_slices=4, labels_file="labels_v2.csv")
+
+    pseudo = chosen[chosen["source"] == "pseudo"]
+    assert np.allclose(np.stack(pseudo["labels"]), 0.25)
+    assert not np.allclose(np.stack(default[default["source"] == "pseudo"]["labels"]), 0.25)
