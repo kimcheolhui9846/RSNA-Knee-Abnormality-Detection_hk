@@ -3,7 +3,8 @@
 실행: `python -m src.data.build_cache --workers 16`
 - 출력: `<out>/<StudyInstanceUID>/<SeriesInstanceUID>.npy` (uint8, (N, size, size))
   와 인덱스 `<out>/<split>_index.csv`
-- 이미 있는 파일은 건너뛰므로 중간에 끊겨도 다시 실행하면 이어서 만든다.
+- 이미 있는 `(N, size, size)` uint8 파일은 건너뛰므로 중간에 끊겨도 다시 실행하면 이어서 만든다.
+  크기·dtype이 다르거나 깨진 파일은 다시 만든다.
 - 읽기에 실패한 시리즈는 전체를 멈추지 않고 인덱스에 `status=error`로 남긴다.
 """
 
@@ -22,6 +23,19 @@ from src.data.preprocess import preprocess_series
 from src.paths import REPO_ROOT, data_dir
 
 
+def _valid_cache_slices(path: Path, size: int) -> int | None:
+    """`path`가 `(N, size, size)` uint8 캐시면 N. 없거나 모양·dtype이 다르거나 깨졌으면 None."""
+    if not path.exists():
+        return None
+    try:
+        arr = np.load(path, mmap_mode="r")
+    except (ValueError, OSError):
+        return None
+    if arr.dtype != np.uint8 or arr.ndim != 3 or arr.shape[1:] != (size, size):
+        return None
+    return int(arr.shape[0])
+
+
 def _process(task: tuple[dict, Path, Path, int, str]) -> dict:
     row, data_root, out_dir, size, split = task
     study, series = row[ID_COL], row["SeriesInstanceUID"]
@@ -33,8 +47,9 @@ def _process(task: tuple[dict, Path, Path, int, str]) -> dict:
         if first is None:
             raise FileNotFoundError(f"DICOM 없음: {series_dir}")
         header = pydicom.dcmread(first, stop_before_pixels=True)
-        if out.exists():
-            n_slices = np.load(out, mmap_mode="r").shape[0]
+        n_cached = _valid_cache_slices(out, size)
+        if n_cached is not None:
+            n_slices = n_cached
             record["status"] = "cached"
         else:
             arr = preprocess_series(load_series(series_dir), size=size)
