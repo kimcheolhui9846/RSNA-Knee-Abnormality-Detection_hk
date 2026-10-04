@@ -77,6 +77,14 @@ def test_abstentions_lower_coverage_and_are_excluded_from_accuracy() -> None:
     row = evaluate_extraction(truth, pred).loc[LABELS[0]]
     assert row["coverage"] == pytest.approx(0.5)
     assert row["accuracy"] == pytest.approx(1.0)
+    assert row["n"] == 5  # 판단 보류 5개는 표본 수에서 뺀다
+
+
+def test_macro_n_is_number_of_labeled_studies() -> None:
+    truth = _truth(n=10)
+    pred = truth.copy()
+    pred.loc[:4, LABELS[0]] = np.nan
+    assert evaluate_extraction(truth, pred).loc["macro", "n"] == 10
 
 
 def test_soft_predictions_are_thresholded_at_half_and_scored_by_auc() -> None:
