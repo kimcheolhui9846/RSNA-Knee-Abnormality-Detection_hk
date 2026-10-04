@@ -1,4 +1,9 @@
-from torch import nn
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # torch는 모델을 만들 때만 import한다 (CI의 기본 환경에는 torch가 없다)
+    from torch import nn
 
 
 def build_model(cfg: dict) -> nn.Module:

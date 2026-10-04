@@ -65,7 +65,37 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_table(data_dir: Path, target_slices: int, labels_file: str = "labels.csv") -> pd.DataFrame:
+def validate_folds(labels: pd.DataFrame, folds: pd.DataFrame, n_folds: int | None = None) -> None:
+    """학습에 쓰는 study(source가 gt / pseudo)가 folds에 정확히 한 번씩, 정수 fold로 있는지 확인.
+
+    inner merge는 빠진 study를 조용히 학습에서 빼고 중복 study를 두 번 넣으므로 여기서 먼저 막는다.
+    """
+    if labels[ID_COL].duplicated().any():
+        raise ValueError(
+            f"labels에 중복 {ID_COL}: {labels[ID_COL][labels[ID_COL].duplicated()].iloc[0]}"
+        )
+    dup = folds[ID_COL].duplicated()
+    if dup.any():
+        raise ValueError(
+            f"folds에 중복 {ID_COL} {int(dup.sum())}개 (예: {folds[ID_COL][dup].iloc[0]})"
+        )
+    fold = pd.to_numeric(folds["fold"], errors="coerce")
+    if fold.isna().any() or (fold % 1 != 0).any():
+        raise ValueError("folds의 fold 값은 비어 있지 않은 정수여야 한다")
+    if n_folds is not None and not fold.between(0, n_folds - 1).all():
+        raise ValueError(f"fold 값이 0..{n_folds - 1} 범위를 벗어남: {sorted(fold.unique())}")
+    used = labels.loc[labels["source"].isin(["gt", "pseudo"]), ID_COL]
+    missing = used[~used.isin(folds[ID_COL])]
+    if len(missing):
+        raise ValueError(f"folds에 없는 학습 study {len(missing)}개 (예: {missing.iloc[0]})")
+
+
+def load_table(
+    data_dir: Path,
+    target_slices: int,
+    labels_file: str = "labels.csv",
+    n_folds: int | None = None,
+) -> pd.DataFrame:
     """전체 study 학습 테이블 + `source`(gt / pseudo / none).
 
     `labels_file`로 같은 데이터셋 안의 다른 라벨 표를 고른다 (config `labels_file`).
@@ -76,6 +106,7 @@ def load_table(data_dir: Path, target_slices: int, labels_file: str = "labels.cs
         full = labels[list(LABELS)].notna().all(axis=1)
         labels["source"] = np.where(full, "gt", "none")
     folds = pd.read_csv(data_dir / "folds.csv", dtype={ID_COL: str})
+    validate_folds(labels, folds, n_folds)
     index = pd.read_csv(data_dir / "train_index.csv", dtype={ID_COL: str, "SeriesInstanceUID": str})
     table = build_study_table(labels, folds, index, target_slices=target_slices)
     return table.merge(labels[[ID_COL, "source"]], on=ID_COL, how="left")
@@ -104,6 +135,27 @@ def _param_groups(model: torch.nn.Module, cfg: dict) -> list[dict]:
     backbone = [p for n, p in trainable if n.startswith("encoder.")]
     head = [p for n, p in trainable if not n.startswith("encoder.")]
     return [{"params": backbone, "lr": cfg["backbone_lr"]}, {"params": head, "lr": cfg["lr"]}]
+
+
+def _pseudo_holdout(
+    pseudo_table: pd.DataFrame, oof_pseudo: np.ndarray, out_dir: Path, enabled: bool
+) -> dict:
+    """pseudo-label(0.5 기준 이진화, 결측 제외)에 대한 OOF macro AUC + `oof_pseudo.csv`."""
+    if not enabled or len(pseudo_table) == 0:
+        return {}
+    soft = np.stack(pseudo_table["labels"]).astype(np.float32)
+    target = np.where(np.isnan(soft), np.nan, (soft >= 0.5).astype(np.float32))
+    macro, per_label = macro_auc(target, oof_pseudo)
+    df = pd.DataFrame(oof_pseudo, columns=list(LABELS))
+    df.insert(0, "fold", pseudo_table["fold"].to_numpy())
+    df.insert(0, ID_COL, pseudo_table[ID_COL].to_numpy())
+    df.to_csv(out_dir / "oof_pseudo.csv", index=False)
+    log.info("pseudo-holdout macro AUC %.4f (n=%d)", macro, len(pseudo_table))
+    return {
+        "pseudo_holdout_auc": macro,
+        "pseudo_holdout_per_label": per_label,
+        "n_pseudo_holdout": len(pseudo_table),
+    }
 
 
 def _predict(model: torch.nn.Module, loader: DataLoader, device: str, amp: bool) -> np.ndarray:
@@ -174,7 +226,10 @@ def run(
     started = time.time()
 
     full_table = load_table(
-        data_dir, config["target_slices"], config.get("labels_file", "labels.csv")
+        data_dir,
+        config["target_slices"],
+        config.get("labels_file", "labels.csv"),
+        n_folds=config["n_folds"],
     )
     is_gt = (full_table["source"] == "gt").to_numpy()
     has_label = np.stack(full_table["label_mask"]).any(axis=1)
@@ -189,6 +244,11 @@ def run(
     )
 
     oof = np.full((len(table), len(LABELS)), np.nan, dtype=np.float32)
+    # 보조 CV: fold k 학습에 쓰지 않은 pseudo study (정답 58개보다 75배 많아 분산이 작다)
+    eval_pseudo = bool(config.get("eval_pseudo", False))
+    pseudo_table = full_table[(full_table["source"] == "pseudo").to_numpy() & has_label]
+    pseudo_table = pseudo_table.reset_index(drop=True)
+    oof_pseudo = np.full((len(pseudo_table), len(LABELS)), np.nan, dtype=np.float32)
     weights: dict[str, torch.Tensor] = {}
     fold_scores: list[float] = []
     amp = config["amp"] and device == "cuda"
@@ -198,6 +258,11 @@ def run(
         is_val = (table["fold"] == k).to_numpy()
         val_t = table[is_val]
         oof[is_val] = _predict(model, _loader(val_t, data_dir, config, shuffle=False), device, amp)
+        if eval_pseudo:
+            p_val = (pseudo_table["fold"] == k).to_numpy()
+            if p_val.any():
+                loader = _loader(pseudo_table[p_val], data_dir, config, shuffle=False)
+                oof_pseudo[p_val] = _predict(model, loader, device, amp)
         fold_macro, _ = macro_auc(np.stack(val_t["labels"]), oof[is_val])
         fold_scores.append(fold_macro)
         log.info(
@@ -229,6 +294,7 @@ def run(
         "n_studies": len(table),
         "n_train_studies": int(train_pool.sum()),
         "n_slots": len(SLOTS),
+        **_pseudo_holdout(pseudo_table, oof_pseudo, out_dir, eval_pseudo),
         "elapsed_sec": round(time.time() - started, 1),
         "device": device,
         "config": config,
