@@ -1,0 +1,29 @@
+# exp004 — exp003 라벨(공개 LLM soft) + DINOv2 ViT-S 백본 + 라벨별 attention 집계 + 2.5D
+seed: 42
+n_folds: 5
+
+model:
+  name: dino_attn
+  backbone: vit_small_patch14_dinov2.lvd142m   # timm, 사전학습 가중치는 Pod에서 HF Hub로 받음
+  pretrained: true
+  img_size: 224              # 캐시 256 → 224로 줄여 넣는다 (patch 14 × 16)
+  freeze_blocks: 6           # 12개 중 앞 6개 고정 (메모리·시간, 사전학습 특징 보존)
+  n_heads: 6
+  dropout: 0.1
+
+cache_dir: "."
+labels_file: labels_v2.csv
+train_on: any
+
+depth: 16
+slab: 3                      # 2.5D: 각 슬라이스 + 앞뒤 이웃을 3채널로
+size: 256
+target_slices: 30
+
+epochs: 4
+batch_size: 2
+lr: 5.0e-4                   # attention 헤드
+backbone_lr: 3.0e-5          # 사전학습 백본은 작게
+weight_decay: 5.0e-2
+amp: true
+num_workers: 8
