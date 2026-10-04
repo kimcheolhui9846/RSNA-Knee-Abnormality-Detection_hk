@@ -1,0 +1,39 @@
+# exp005 — exp004(DINOv2 + 라벨별 attention + 2.5D, labels_v2)의 학습 부족을 고친다. 라벨은 exp004와 같다.
+# exp004 원인 분석(2026-10-04): attention이 균등 평균으로 퇴화(최대 가중치 ≈ 1/96), 백본 실효 lr ≈ 1.5e-5,
+# 4 epoch 동안 줄일 수 있는 loss의 17–20%만 줄임, 예측이 사전확률 근처로 압축.
+seed: 42
+n_folds: 5
+
+model:
+  name: dino_attn
+  backbone: vit_small_patch14_dinov2.lvd142m
+  pretrained: true
+  img_size: 224
+  freeze_blocks: 2           # exp004 6 → 2: MRI 도메인에 더 적응하게
+  n_heads: 6
+  dropout: 0.1
+  query_init_std: 1.0        # exp004 0.02: q·k가 작아 attention이 균등 평균에 머물렀다
+  slot_pool: true            # 칸별 깊이 평균·최대 경로 추가 (exp002의 최대 풀링이 국소 소견에 유리)
+
+cache_dir: "."
+labels_file: labels_v2.csv
+train_on: any
+eval_pseudo: true            # 보조 CV: held-out pseudo study 4,349개
+
+depth: 16
+slab: 3
+size: 256
+target_slices: 30
+
+epochs: 6                    # exp004 4
+batch_size: 2
+lr: 1.0e-3                   # 헤드 (exp004 5e-4)
+backbone_lr: 1.0e-4          # exp004 3e-5
+warmup: 0.05                 # 전체 step의 5% 선형 warmup 후 cosine
+weight_decay: 5.0e-2
+no_decay_1d: true            # bias·LayerNorm·임베딩·질의에는 wd 없음
+grad_clip: 1.0
+init_bias_prior: true        # 출력 bias = 학습 라벨 사전확률의 logit
+amp: true
+amp_dtype: bf16
+num_workers: 8
