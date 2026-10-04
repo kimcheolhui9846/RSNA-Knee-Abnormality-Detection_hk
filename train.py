@@ -329,7 +329,8 @@ def main() -> int:
         weights = train_model(cfg)
         if upload:
             files = {"model.safetensors": weights, "config.json": config_path}
-            for name in ("metrics.json", "oof.csv"):  # 교차검증 결과 (src/train.py가 저장)
+            # 교차검증 결과 (src/train.py가 저장). 없는 파일은 hf_upload가 건너뛴다
+            for name in ("metrics.json", "oof.csv", "oof_pseudo.csv"):
                 files[name] = cfg.output_dir / name
             hf_upload(cfg, files, "final weights")
         rc = 0
