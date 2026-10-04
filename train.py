@@ -27,6 +27,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import signal
 import sys
 import time
@@ -115,7 +116,19 @@ def train_model(cfg: Config) -> Path:
         # 실데이터 없이 같은 학습 코드를 아주 작게 끝까지 돌린다
         # (CPU로 돌릴 것: CUDA_VISIBLE_DEVICES=, 사전학습 가중치 다운로드 없음)
         data_dir = cfg.output_dir / "synthetic_data"
-        make_synthetic_data(data_dir, n_studies=8, depth=4, size=32, n_folds=2)
+        # config가 고르는 라벨 파일 이름·캐시 위치(cache_dir)를 합성 데이터에도 그대로 맞춘다
+        make_synthetic_data(
+            data_dir,
+            n_studies=8,
+            depth=4,
+            size=32,
+            n_folds=2,
+            n_pseudo=4,
+            cache_subdir=config.get("cache_dir", "cache"),
+        )
+        labels_file = config.get("labels_file", "labels.csv")
+        if labels_file != "labels.csv":
+            shutil.copyfile(data_dir / "labels.csv", data_dir / labels_file)
         config.update(
             n_folds=2, epochs=1, batch_size=2, depth=4, size=32, target_slices=4, num_workers=0
         )
