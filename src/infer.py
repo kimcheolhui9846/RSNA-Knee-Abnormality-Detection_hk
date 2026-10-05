@@ -5,12 +5,17 @@
 캐시를 쓰지 않고 study마다 DICOM을 바로 읽는다. 읽을 수 있는 시리즈가 하나도 없는 study는
 `FALLBACK_PROB`로 채워 제출 파일이 항상 완성되게 한다.
 
+여러 모델 앙상블: 가중치 폴더에 `ensemble.yaml`이 있으면 그 안의 멤버(각자 `model.safetensors`
++ `config.yaml`)를 모두 돌리고 라벨별 순위(rank)를 가중 평균한다 (`load_members`).
+AUC는 순위만 보므로 모델마다 확률 보정이 달라도 순위 평균이 안전하다.
+
 실행: `python -m src.infer --weights model.safetensors --config configs/exp001_baseline.yaml`
 """
 
 import argparse
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +35,47 @@ from src.paths import data_dir
 from src.submission import validate_submission
 
 FALLBACK_PROB = 0.5
+# 멤버끼리 같아야 하는 입력 설정 — 같으면 DICOM을 한 번만 읽어 모든 멤버에 넣는다
+DATA_KEYS = ("depth", "size", "slab", "target_slices")
 log = logging.getLogger("infer")
+
+
+@dataclass
+class Member:
+    name: str
+    weights_path: Path
+    config: dict
+    weight: float = 1.0
+
+
+def load_members(weights_dir: Path) -> list[Member]:
+    """가중치 폴더 → 앙상블 멤버.
+
+    - `ensemble.yaml` 없음: 폴더의 `model.safetensors` + `config.yaml` 하나 (단일 모델, 예전 구성)
+    - `ensemble.yaml`: `members: [{dir: exp002, weight: 0.5}, ...]`
+      — 각 `dir`에 `model.safetensors` + `config.yaml`
+    """
+    weights_dir = Path(weights_dir)
+    spec_path = weights_dir / "ensemble.yaml"
+    if not spec_path.is_file():
+        config = yaml.safe_load((weights_dir / "config.yaml").read_text(encoding="utf-8"))
+        return [Member("model", weights_dir / "model.safetensors", config)]
+    spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    members = []
+    for m in spec["members"]:
+        d = weights_dir / m["dir"]
+        config = yaml.safe_load((d / "config.yaml").read_text(encoding="utf-8"))
+        members.append(Member(m["dir"], d / "model.safetensors", config, float(m.get("weight", 1))))
+    return members
+
+
+def rank_average(preds: list[np.ndarray], weights: list[float]) -> np.ndarray:
+    """멤버별 `(N, 12)` 확률 → 라벨별 순위(0–1 백분위)의 가중 평균."""
+    total = float(sum(weights))
+    ranks = [
+        pd.DataFrame(p).rank(pct=True).to_numpy() * w for p, w in zip(preds, weights, strict=True)
+    ]
+    return (np.sum(ranks, axis=0) / total).astype(np.float32)
 
 
 def load_ensemble(weights_path: Path, model_cfg: dict, device: str) -> list[torch.nn.Module]:
@@ -141,37 +186,67 @@ def predict(
     device: str | None = None,
     num_workers: int = 2,
 ) -> pd.DataFrame:
+    """단일 모델 추론 (멤버 하나짜리 `predict_members`)."""
+    member = Member("model", Path(weights_path), config)
+    return predict_members(data_root, [member], out_csv, device, num_workers)
+
+
+def predict_members(
+    data_root: Path,
+    members: list[Member],
+    out_csv: Path,
+    device: str | None = None,
+    num_workers: int = 2,
+) -> pd.DataFrame:
+    """멤버마다 fold 평균 확률을 내고, 멤버가 둘 이상이면 라벨별 순위를 가중 평균한다."""
     data_root = Path(data_root)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     started = time.time()
+    data_cfg = {k: members[0].config.get(k) for k in DATA_KEYS}
+    for m in members[1:]:
+        other = {k: m.config.get(k) for k in DATA_KEYS}
+        if other != data_cfg:
+            raise ValueError(
+                f"멤버 입력 설정이 다르다: {members[0].name} {data_cfg} vs {m.name} {other}"
+            )
 
     test = pd.read_csv(data_root / "test.csv", dtype={ID_COL: str})
     series = pd.read_csv(
         data_root / "test_series.csv", dtype={ID_COL: str, "SeriesInstanceUID": str}
     )
     study_ids = test[ID_COL].tolist()
-    models = load_ensemble(Path(weights_path), config["model"], device)
-    log.info("test studies %d, folds %d, device %s", len(study_ids), len(models), device)
+    models = [load_ensemble(m.weights_path, m.config["model"], device) for m in members]
+    log.info(
+        "test studies %d, members %s, device %s",
+        len(study_ids),
+        [(m.name, len(f), m.weight) for m, f in zip(members, models, strict=True)],
+        device,
+    )
 
-    ds = TestStudyDataset(study_ids, series, data_root / "test_series", config)
+    ds = TestStudyDataset(study_ids, series, data_root / "test_series", members[0].config)
     loader = DataLoader(ds, batch_size=1, num_workers=num_workers)
     amp = device == "cuda"
-    probs: dict[str, np.ndarray] = {}
+    probs = np.full((len(members), len(study_ids), len(LABELS)), FALLBACK_PROB, np.float32)
+    row = {sid: i for i, sid in enumerate(study_ids)}
     n_failed = 0
     with torch.no_grad(), torch.autocast(device_type=device, enabled=amp):
         for i, batch in enumerate(loader):
             sid = batch["study_id"][0]
             if bool(batch["failed"][0]):
-                probs[sid] = np.full(len(LABELS), FALLBACK_PROB, dtype=np.float32)
                 n_failed += 1
                 continue
             image, mask = batch["image"].to(device), batch["slot_mask"].to(device)
-            fold_probs = [torch.sigmoid(m(image, mask).float())[0].cpu().numpy() for m in models]
-            probs[sid] = np.mean(fold_probs, axis=0)
+            for j, folds in enumerate(models):
+                fold_probs = [torch.sigmoid(f(image, mask).float())[0].cpu().numpy() for f in folds]
+                probs[j, row[sid]] = np.mean(fold_probs, axis=0)
             if (i + 1) % 100 == 0:
                 log.info("%d / %d studies, %.1fs", i + 1, len(study_ids), time.time() - started)
 
-    sub = pd.DataFrame([probs[s] for s in study_ids], columns=list(LABELS)).astype(float)
+    if len(members) == 1:
+        final = probs[0]
+    else:
+        final = rank_average(list(probs), [m.weight for m in members])
+    sub = pd.DataFrame(final, columns=list(LABELS)).astype(float)
     sub.insert(0, ID_COL, study_ids)
     validate_submission(sub, expected_ids=study_ids)
     sub.to_csv(out_csv, index=False)

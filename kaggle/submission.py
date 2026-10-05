@@ -3,7 +3,8 @@
 붙여야 하는 입력:
 - 대회 데이터: rsna-knee-abnormality-detection
 - 코드 데이터셋: <user>/rsna-knee-code   (src/, configs/, wheels/ — kaggle/build_kaggle.py가 만든다)
-- 가중치 데이터셋: <user>/rsna-knee-weights (model.safetensors, config.yaml)
+- 가중치 데이터셋: <user>/rsna-knee-weights (model.safetensors + config.yaml,
+  또는 ensemble.yaml + 멤버 폴더들)
 
 Kaggle의 입력 마운트 경로가 바뀌어도 동작하도록 파일을 찾아서 경로를 정한다.
 """
@@ -92,12 +93,10 @@ def main() -> None:
 
     sys.path.insert(0, str(code))
     os.environ["RSNA_DATA_DIR"] = str(competition)
-    import yaml
+    from src.infer import load_members, predict_members
 
-    from src.infer import predict
-
-    config = yaml.safe_load((weights / "config.yaml").read_text(encoding="utf-8"))
-    predict(competition, weights / "model.safetensors", config, OUT, num_workers=4)
+    # 가중치 폴더에 ensemble.yaml이 있으면 여러 모델의 순위 평균, 없으면 단일 모델
+    predict_members(competition, load_members(weights), OUT, num_workers=4)
     log.info("done in %.1f min → %s", (time.time() - started) / 60, OUT)
 
 
