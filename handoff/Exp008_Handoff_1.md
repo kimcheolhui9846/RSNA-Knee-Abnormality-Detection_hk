@@ -15,11 +15,13 @@
 
 ## 3. 결과
 - `ruff check` 통과, `pytest -q` 108 passed, 2 skipped (smoke가 새 config 2개 포함)
-- RunPod 결과: (실행 후 기록)
+- RunPod 결과: exp008-v2 0.8863, exp008-mean 0.8997 (정답 58, SWA). exp007 + 두 변형 같은 비중 순위 평균 **0.9125** (exp007 단독 0.9037). 상세는 `experiments/exp008.md`
+- 가중치: HF `runs/20261005-161925-7b1b15/`, `runs/20261005-162021-5ce9e8/` 의 `model.safetensors`
 
 ## 4. 미해결 문제
-- 4090 재고에 따라 L40S로 갈 수 있다(개당 약 $4)
+- 4090(24 GB)에서 bs 8 + grad checkpointing으로 OOM 없이 돌았다(각 3.2시간)
+- Lateral OA는 세 모델 모두 0.75–0.76 — 라벨 변형으로는 안 오른다
 
 ## 5. 다음 작업자가 할 일
-1. 정답 58 OOF 기록, exp007과의 순위 평균 OOF 계산
+1. ~~정답 58 OOF 기록, 순위 평균 계산~~ 완료
 2. 좋은 조합을 Kaggle 앙상블·공개 파이프라인 혼합에 넣는다 (`kaggle/build_kaggle.py --member`)
