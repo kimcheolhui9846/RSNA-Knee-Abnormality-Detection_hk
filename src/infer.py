@@ -237,7 +237,7 @@ class TestStudyDataset(Dataset):
                 rows,
                 self.series_root / sid,
                 slots=SLOTS64 if cfg.get("slots") == "SLOTS64" else SLOTS44,
-                span=tuple(cfg.get("span", (0.06, 0.94))),
+                span=tuple(cfg.get("span", (0.15, 0.85))),
                 img=cfg.get("img", 336),
                 crop_mm=cfg.get("crop_mm", 140.0),
             )
