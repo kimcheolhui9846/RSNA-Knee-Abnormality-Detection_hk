@@ -38,6 +38,7 @@ import os, shutil, subprocess, sys, time
 from pathlib import Path
 
 _t0 = time.time()
+OURS_DEADLINE_SEC = 8.3 * 3600  # 노트북 시작부터 이 시각까지 우리 단계를 끝낸다
 try:  # 공개 파이프라인이 잡아 둔 GPU 메모리를 돌려준다
     import gc
 
@@ -57,14 +58,28 @@ for _root, _dirs, _files in os.walk("/kaggle/input"):
         _runner = Path(_root) / "run_submission.py"
         break
 print("our runner:", _runner)
-if _runner is not None:
-    _r = subprocess.run(
-        [sys.executable, str(_runner)],
-        env={**os.environ, "KAGGLE_SUBMISSION_PATH": str(_ours)},
-        capture_output=True, text=True,
-    )
-    print(_r.stdout[-4000:])
-    print(_r.stderr[-4000:])
+# 9시간 제한: 노트북이 시작된 뒤 지난 시간을 빼고 남은 만큼만 우리 단계에 준다.
+# 넘으면 우리 단계를 끊고 공개 결과만 제출한다 (제출 전체가 시간 초과로 실패하지 않게).
+try:
+    import psutil
+
+    _elapsed = time.time() - psutil.Process().create_time()
+except Exception:  # noqa: BLE001
+    _elapsed = None
+_limit = None if _elapsed is None else max(0.0, OURS_DEADLINE_SEC - _elapsed)
+print(f"notebook elapsed {_elapsed}, ours time limit {_limit}")
+if _runner is not None and (_limit is None or _limit > 300):
+    try:
+        _r = subprocess.run(
+            [sys.executable, str(_runner)],
+            env={**os.environ, "KAGGLE_SUBMISSION_PATH": str(_ours)},
+            capture_output=True, text=True, timeout=_limit,
+        )
+        print(_r.stdout[-4000:])
+        print(_r.stderr[-4000:])
+    except subprocess.TimeoutExpired:
+        print("ours timed out — public only")
+        _ours.unlink(missing_ok=True)
 print(f"ours done in {(time.time() - _t0) / 60:.1f} min, exists={_ours.exists()}")
 """
 

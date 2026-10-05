@@ -84,3 +84,12 @@ def test_blend_mixes_ranks(tmp_path: Path) -> None:
 def test_blend_falls_back_to_public_when_ours_missing(tmp_path: Path) -> None:
     out = _run_blend(tmp_path, 0.3, ours_ok=False)
     np.testing.assert_allclose(out["ACL"], [0.1, 0.2, 0.3, 0.4])
+
+
+def test_run_ours_has_time_guard() -> None:
+    """우리 단계는 9시간 제한 안에서 끊기고, 끊기면 공개 결과로 돌아간다."""
+    from build_public_blend import RUN_OURS
+
+    assert "timeout=_limit" in RUN_OURS
+    assert "TimeoutExpired" in RUN_OURS and "unlink" in RUN_OURS
+    compile(RUN_OURS, "run_ours", "exec")
