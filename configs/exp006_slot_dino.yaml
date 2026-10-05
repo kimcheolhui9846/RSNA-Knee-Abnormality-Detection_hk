@@ -1,0 +1,44 @@
+# exp006 — 공개 상위 노트북(Speedy Raptors 계열)의 DINO 레시피를 우리 코드로 다시 구현.
+# 칸 6개(단면 × fluid × 지방억제, 헤더 정규식 판정)마다 가운데 20–80% 구간의 슬라이스 3장을 RGB 이미지 1장으로,
+# 무릎 중심 130 mm 자르기, 오른 무릎 뒤집기 → DINOv2 ViT-S (마지막 6블록, lr 8e-6) CLS+patch 평균
+# → 칸 attention 헤드(라벨별 칸 사전 가산점).
+seed: 42
+n_folds: 5
+
+model:
+  name: slot_dino
+  backbone: vit_small_patch14_dinov2.lvd142m
+  pretrained: true
+  img_size: 224
+  unfreeze_last: 6
+  pool: cls_mean
+  prior: true
+  hidden: 256
+  dropout: 0.2
+
+input: slot_image
+series_meta: train_series_meta.csv   # python -m src.data.headers 결과 (HF 데이터셋에 동봉)
+img_out: 224
+crop_mm: 130.0
+slice_band: [0.2, 0.8]
+
+cache_dir: "."
+labels_file: labels_v2.csv
+train_on: any
+eval_pseudo: true
+
+# build_study_table(학습 대상·fold·라벨)용. 칸 이미지 입력에서는 depth·size를 쓰지 않는다
+depth: 16
+size: 256
+target_slices: 30
+
+epochs: 10
+batch_size: 8
+lr: 1.0e-3                 # 헤드
+backbone_lr: 8.0e-6        # exp005(1e-4)는 백본이 붕괴했다. 공개 레시피 값
+warmup: 0.05
+weight_decay: 2.0e-2
+grad_clip: 1.0
+amp: true
+amp_dtype: bf16
+num_workers: 8
