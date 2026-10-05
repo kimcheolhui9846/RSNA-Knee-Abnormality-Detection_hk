@@ -21,11 +21,11 @@
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 99 passed, 2 skipped / torch 없는 환경 53 passed, 7 skipped
 - 새 테스트: 헤더 판정(지방억제·가중·px·좌우), 가운데 구간 슬라이스, mm 자르기, 좌우 뒤집기, 칸 선택, 증강, 모델(마스크·빈 study·학습 블록·사전 가산점), end-to-end, smoke(전 config)
 - 로컬 CPU 사전 점검: 특징 붕괴 없음(이미지 간 std/평균 0.61)
-- RunPod 결과: (실행 후 기록)
+- RunPod 결과 `20261005-085326-451202`: 정답 58 CV **0.812**(exp002 0.778), 보조 CV 0.806, 학습 15분, 약 $0.95
+- 앙상블 exp006 0.5 + exp002 0.25 + exp003r 0.25: OOF **0.827** (현재 제출 구성 0.798 대비 +0.029, CI [+0.007, +0.051])
 
 ## 4. 미해결 문제
-- Kaggle 추론 경로는 아직 칸 이미지 입력을 지원하지 않는다 (제출 전에 `src/infer.py`에 test 헤더 판정 + `slot_image` 추가 필요)
-- 앙상블에서 b0(슬라이스 입력)와 섞으려면 `predict_members`를 입력 방식별 묶음으로 확장해야 한다
+- Kaggle 추론 경로는 PR #20(`feat/slot-infer`)에서 지원
 
 ## 5. 다음 작업자가 할 일
 1. RunPod 결과를 `experiments/exp006.md`, README에 기록
