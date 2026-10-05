@@ -2,7 +2,8 @@
 
 공개 Raptor(dreaddevelopment, 단일 CoAtNet LB 0.924)의 규칙을 우리 코드로 다시 작성했다.
 - 스택: 칸 5개(시상 fluid / 시상 non-fluid / 관상 fluid / 관상 아무거나 / 축상)에서 정해진 장수,
-  시리즈의 `span`(기본 6–94%) 구간에서 고르게, 시리즈 단위 2–98 백분위 밝기,
+  시리즈의 `span`(기본 15–85%, 공개 코퍼스 v2와 비트 단위 일치 확인) 구간에서 고르게,
+  시리즈 단위 2–98 백분위 밝기,
   슬라이스마다 영상 중심 `crop_mm`(140 mm) 정사각형 → `img`(336) INTER_AREA. 없는 칸은 0.
 - 창: 스택에서 연속한 슬라이스 3장을 RGB 1장으로. 학습은 무작위 `k`개, 평가는 고르게 `k_eval`개.
   (창이 칸 경계를 넘을 수 있는 것도 원본과 같다)
@@ -99,7 +100,7 @@ def build_stack(
     series_rows: list[dict],
     study_dir: Path,
     slots=SLOTS44,
-    span: tuple[float, float] = (0.06, 0.94),
+    span: tuple[float, float] = (0.15, 0.85),
     img: int = 336,
     crop_mm: float = 140.0,
     pct: tuple[float, float] = (2.0, 98.0),

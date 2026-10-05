@@ -1,7 +1,9 @@
 # exp007 — 공개 Raptor 방식(단일 CoAtNet LB 0.924)을 우리 코드로 재구현해 학습한다.
 # 입력: 공개 코퍼스 dreaddevelopment/knee-raptor-corpus(+ext) — study마다 44×336×336 uint8 스택
-#   (시상 fluid 12 / 시상 non-fluid 10 / 관상 fluid 8 / 관상 6 / 축상 8, 시리즈 6–94% 구간, 140 mm 자르기)
-# 모델: CoAtNet-rmlp-2 384 전체 미세조정 + 소견별 attention-MIL. 라벨: labels_v2(공개 LLM 라벨 5종 평균).
+#   (시상 fluid 12 / 시상 non-fluid 10 / 관상 fluid 8 / 관상 6 / 축상 8, 시리즈 15–85% 구간, 140 mm 자르기)
+#   우리 build_stack()이 train DICOM에서 코퍼스와 비트 단위로 같은 스택을 만든다 (7 study 확인).
+# 모델: CoAtNet-rmlp-2 384 전체 미세조정 + 소견별 attention-MIL.
+# 라벨: 공개 Raptor와 같은 dreaddevelopment LLM soft 라벨(+ 정답 58) — 먼저 재현을 검증한다.
 trainer: raptor
 seed: 42
 
@@ -13,7 +15,14 @@ model:
   grad_ckpt: true            # bs 8 × 12창 × 384px를 24 GB에 넣는다 (공개 측정 23.7 GB)
 
 corpus_dir: raptor_corpus
-labels_file: labels_v2.csv
+
+# Kaggle 추론(DICOM → 같은 스택)용. 학습은 코퍼스를 그대로 읽는다
+input: raptor_stack
+slots: SLOTS44
+span: [0.15, 0.85]
+img: 336
+crop_mm: 140.0
+labels_file: labels_dread.csv
 holdout_fold: null           # 학습 데이터를 줄이지 않는다 (공개: 코퍼스 확대가 +0.013)
 
 res: 384
