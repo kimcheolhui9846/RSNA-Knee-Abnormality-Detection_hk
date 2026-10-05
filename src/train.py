@@ -96,6 +96,7 @@ def load_table(
     target_slices: int,
     labels_file: str = "labels.csv",
     n_folds: int | None = None,
+    series_meta: str | None = None,
 ) -> pd.DataFrame:
     """전체 study 학습 테이블 + `source`(gt / pseudo / none).
 
@@ -110,11 +111,30 @@ def load_table(
     validate_folds(labels, folds, n_folds)
     index = pd.read_csv(data_dir / "train_index.csv", dtype={ID_COL: str, "SeriesInstanceUID": str})
     table = build_study_table(labels, folds, index, target_slices=target_slices)
-    return table.merge(labels[[ID_COL, "source"]], on=ID_COL, how="left")
+    table = table.merge(labels[[ID_COL, "source"]], on=ID_COL, how="left")
+    if (
+        series_meta
+    ):  # exp006~ 칸 이미지 입력: 헤더 메타(지방억제·가중·px·좌우)로 칸 6개를 다시 고른다
+        from src.data.slot_image import slot_inputs
+
+        meta = pd.read_csv(data_dir / series_meta, dtype={ID_COL: str, "SeriesInstanceUID": str})
+        cols = ["SeriesInstanceUID", "fatsat", "fluid", "px", "laterality"]
+        merged = index.merge(meta[cols], on="SeriesInstanceUID", how="inner")
+        table = table.merge(slot_inputs(merged), on=ID_COL, how="left")
+        table["slot6"] = [v if isinstance(v, list) else [None] * 6 for v in table["slot6"]]
+        table["lat"] = table["lat"].where(table["lat"].isin(["L", "R"]), None)
+    return table
 
 
 def _loader(table: pd.DataFrame, data_dir: Path, cfg: dict, shuffle: bool) -> DataLoader:
     cache_root = data_dir / cfg.get("cache_dir", "cache")
+    if cfg.get("input") == "slot_image":  # exp006~: 칸마다 이미지 1장 (학습 loader만 증강)
+        from src.data.slot_image import SlotImageDataset
+
+        ds = SlotImageDataset(table, cache_root, cfg, train=shuffle, seed=cfg["seed"])
+        return DataLoader(
+            ds, batch_size=cfg["batch_size"], shuffle=shuffle, num_workers=cfg["num_workers"]
+        )
     ds = KneeStudyDataset(
         table,
         cache_root=cache_root,
@@ -252,6 +272,8 @@ def train_fold(
     grad_clip = cfg.get("grad_clip")
 
     for epoch in range(cfg["epochs"]):
+        if hasattr(loader.dataset, "epoch"):
+            loader.dataset.epoch = epoch  # 증강 난수를 epoch마다 바꾼다
         model.train()
         losses = []
         for batch in loader:
@@ -299,6 +321,7 @@ def run(
         config["target_slices"],
         config.get("labels_file", "labels.csv"),
         n_folds=config["n_folds"],
+        series_meta=config.get("series_meta"),
     )
     is_gt = (full_table["source"] == "gt").to_numpy()
     has_label = np.stack(full_table["label_mask"]).any(axis=1)
@@ -416,8 +439,8 @@ def make_synthetic_data(
             rel = f"{sid}/s{j}.npy"
             (cache / sid).mkdir(parents=True, exist_ok=True)
             np.save(cache / rel, rng.integers(0, 256, (depth, size, size), dtype=np.uint8))
-            rows.append((sid, f"s{j}", plane, fs, depth, "built", rel))
-    pd.DataFrame(
+            rows.append((sid, f"s{j}", plane, fs, depth, "built", rel, 2 * size, 2 * size))
+    index = pd.DataFrame(
         rows,
         columns=[
             ID_COL,
@@ -427,5 +450,15 @@ def make_synthetic_data(
             "n_slices",
             "status",
             "path",
+            "orig_h",
+            "orig_w",
         ],
-    ).to_csv(data_dir / "train_index.csv", index=False)
+    )
+    index.to_csv(data_dir / "train_index.csv", index=False)
+    # 헤더 메타 (exp006 칸 이미지 입력용): 지방억제 칸은 fluid, 아니면 시상면만 fluid로
+    meta = index[[ID_COL, "SeriesInstanceUID"]].copy()
+    meta["fatsat"] = index["Fat_Suppression"] == 1
+    meta["fluid"] = meta["fatsat"] | (index["Anatomical_Plane"] == "Sagittal")
+    meta["px"] = 0.5
+    meta["laterality"] = ["R" if int(s[-1]) % 2 else "L" for s in meta[ID_COL]]
+    meta.to_csv(data_dir / "train_series_meta.csv", index=False)
