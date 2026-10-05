@@ -112,6 +112,46 @@ def train_model(cfg: Config) -> Path:
     config = yaml.safe_load(Path(cfg.config_path).read_text(encoding="utf-8"))
     data_dir = cfg.data_dir
 
+    if (
+        config.get("trainer") == "raptor"
+    ):  # exp007~: 공개 코퍼스 + Raptor 방식 (fold 없이 모델 하나)
+        from src.train import check_device
+        from src.train_raptor import make_synthetic_corpus, run_raptor
+
+        if cfg.smoke_test:
+            data_dir = cfg.output_dir / "synthetic_data"
+            make_synthetic_corpus(data_dir)
+            if config.get("labels_file", "labels.csv") != "labels.csv":
+                shutil.copyfile(data_dir / "labels.csv", data_dir / config["labels_file"])
+            config.update(
+                corpus_dir="raptor_corpus",
+                res=32,
+                k=4,
+                k_eval=6,
+                epochs=2,
+                batch_size=2,
+                num_workers=0,
+                swa_last=2,
+            )
+            config["model"] = {
+                **config["model"],
+                "backbone": "resnet18",
+                "pretrained": False,
+                "grad_ckpt": False,
+            }
+        result = run_raptor(
+            config,
+            data_dir=data_dir,
+            out_dir=cfg.output_dir,
+            device=check_device(None),
+            heartbeat=heartbeat,
+            checkpoint_dir=cfg.checkpoint_dir,
+        )
+        cfg.extra["result"] = {
+            k: result.get(k) for k in ("macro_auc", "pseudo_holdout_auc", "elapsed_sec")
+        }
+        return cfg.output_dir / "model.safetensors"
+
     if cfg.smoke_test:
         # 실데이터 없이 같은 학습 코드를 아주 작게 끝까지 돌린다
         # (CPU로 돌릴 것: CUDA_VISIBLE_DEVICES=, 사전학습 가중치 다운로드 없음)
