@@ -22,7 +22,7 @@
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 128 passed, 2 skipped
 - 새 테스트: Raptor 멤버 DICOM 추론, 세 입력 방식 동시 앙상블 = 각자 예측의 순위 평균, 혼합 노트북 생성(셀·메타데이터), 순위 혼합 계산, 우리 결과 없을 때 공개 결과 유지
 - 혼합 노트북 시간 가드: 노트북 시작 후 8.3시간까지만 우리 단계를 돌리고(`subprocess.run(timeout=...)`, 경과 시간은 `psutil` 프로세스 시작 시각), 넘으면 공개 결과만 제출
-- Kaggle 실행 `kimche12/rsna-knee-public-blend` v1: 공개 파이프라인 완료 → 우리 앙상블(exp006·002·003r) 0.7분, fallback 0 → 0.9 + 0.1 혼합 → 제출 `56851368` (점수는 채점 후 기록)
+- Kaggle 실행 `kimche12/rsna-knee-public-blend` v1: 공개 파이프라인 완료 → 우리 앙상블(exp006·002·003r) 0.7분, fallback 0 → 0.9 + 0.1 혼합 → 제출 `56851368` **Public LB 0.938** (공개 노트북 0.946보다 낮음 → 약한 모델(정답 58 0.83)을 10% 섞으면 손해, 채점 약 8.5시간)
 
 - 2026-10-05: 가중치 데이터셋을 exp007 단독(`ensemble.yaml` exp007 1.0)으로 갱신. 정답 58에서 exp007 + 기존 앙상블 순위 평균은 0.904 → 최대 0.905(0.9:0.1)로 이득이 없어 단독으로 둠
   - 제출 `56856929`: exp007 단독 (`rsna-knee-submit` v7, 공개 test 3건 GPU 35.7초, fallback 0) — **Public LB 0.918** (이전 최고 0.857, 공개 원작자 단일 0.924)
