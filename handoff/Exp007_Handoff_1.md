@@ -20,12 +20,14 @@
 ## 3. 결과
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 106 passed, 2 skipped (smoke: exp007 포함 전 config)
 - 새 테스트: 창 중심(평가 고르게/학습 무작위), 3장 RGB 창, 모델 출력·소견별 attention, 코퍼스 두 부분 합치기, end-to-end(보조 CV 포함)
-- RunPod 결과: (실행 후 기록)
+- RunPod 결과: run `20261005-122118-c3f064`(L40S 48 GB, 3.8시간, 약 $4.2) **정답 58 OOF 0.9037** (SWA 마지막 3 epoch).
+  epoch별 최고 0.909(8 epoch), 8 epoch 이후 0.90–0.91 평탄. 라벨별 최저 Lateral OA 0.764. 상세는 `experiments/exp007.md`.
+- 가중치: HF `cheolhhh9846/RSNA-Knee-Abnormality-Detection_hk` `runs/20261005-122118-c3f064/model.safetensors` (293 MB)
 
 ## 4. 미해결 문제
-- GPU 메모리: 공개 측정 bs 8 + grad checkpointing 23.7 GB (24 GB 4090에 빠듯). OOM이면 bs 6
-- 학습 시간: 공개 기준 4090에서 16 epoch 약 3시간
+- 4090 재고가 없어 L40S(48 GB)에서 돌았다 — 4090(24 GB)에서 bs 8이 들어가는지는 아직 미확인
+- 정답 58 공개 원작자 대비 -0.013: 모델 선택 방식 차이(최고 epoch vs SWA)와 seed 잡음으로 추정, 따로 검증하지 않음
 
 ## 5. 다음 작업자가 할 일
-1. RunPod 결과(정답 58 OOF) 기록, 공개 단일 모델(0.917)과 비교
+1. ~~RunPod 결과 기록~~ 완료(0.9037)
 2. 좋으면 라벨 변형(v2, 평균)·시드 변형으로 2–3개 더 → 공개 0.943 파이프라인과 순위 혼합 (`kaggle/build_public_blend.py`, PR #22)
