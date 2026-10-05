@@ -19,7 +19,7 @@
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 94 passed, 2 skipped / torch 없는 환경 56 passed, 7 skipped
 - 새 테스트: 순위 평균 계산, `ensemble.yaml` 읽기, 앙상블 제출 = 멤버별 예측의 순위 평균, 입력 설정이 다른 멤버 거부, 꾸러미 빌드, `--member` 파싱
 - 로컬 Kaggle 흉내 실행(CPU, 공개 test 3 study): 멤버 2 × 5 fold, fallback 0, 1.0분
-- Kaggle 제출 결과: (제출 후 기록)
+- Kaggle 제출 `56841079` (노트북 v5, GPU 1.3분 — 공개 test 3 study): **Public LB 0.847** (exp002 단독 0.834 → +0.013). OOF 개선(+0.020)과 같은 방향
 
 ## 4. 미해결 문제
 - 추론 시간: b0 두 개라 모델 계산은 약 2배, DICOM 읽기는 그대로. 숨은 test 1,300 study 기준 시간은 제출 상세에서 확인 필요
