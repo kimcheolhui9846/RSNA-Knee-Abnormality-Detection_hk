@@ -1,0 +1,36 @@
+# exp009 fold 1 — exp007(Raptor CoAtNet, dread 라벨)을 5-fold로 학습해 train 전체의 이미지 OOF 예측을 만든다.
+# 용도: (1) 판독문 라벨과 섞어 정제 라벨 만들기 (2) 앙상블 멤버. seed 101.
+trainer: raptor
+seed: 101
+
+model:
+  name: raptor
+  backbone: coatnet_rmlp_2_rw_384.sw_in12k_ft_in1k
+  pretrained: true
+  dropout: 0.2
+  grad_ckpt: true            # bs 8 × 12창 × 384px를 24 GB에 넣는다 (공개 측정 23.7 GB)
+
+corpus_dir: raptor_corpus
+
+# Kaggle 추론(DICOM → 같은 스택)용. 학습은 코퍼스를 그대로 읽는다
+input: raptor_stack
+slots: SLOTS44
+span: [0.15, 0.85]
+img: 336
+crop_mm: 140.0
+labels_file: labels_dread.csv
+holdout_fold: 1              # 이 fold의 pseudo study를 빼고 학습해 그 예측(oof_pseudo.csv)을 남긴다
+
+res: 384
+k: 12                        # 학습: study마다 무작위 창 12개
+k_eval: 24                   # 평가: 고르게 24개
+epochs: 16
+batch_size: 8
+lr: 1.0e-3                   # 헤드
+backbone_lr: 3.0e-5
+pct_start: 0.15
+weight_decay: 2.0e-2
+grad_clip: 3.0
+swa_last: 3                  # 마지막 3 epoch 가중치 평균 (정답 58로 epoch를 고르지 않는다)
+amp: true
+num_workers: 8
