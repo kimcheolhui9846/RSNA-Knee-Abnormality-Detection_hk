@@ -51,6 +51,8 @@ def build(
     if wheels is not None:
         shutil.copytree(wheels, code / "wheels")
     (code / "rsna_knee_code.marker").write_text("rsna-knee code dataset\n", encoding="utf-8")
+    # 공개 파이프라인 혼합 노트북(build_public_blend.py)이 별도 프로세스로 실행한다
+    shutil.copy2(REPO / "kaggle" / "submission.py", code / "run_submission.py")
     (code / "dataset-metadata.json").write_text(
         json.dumps(_dataset_meta(user, CODE_SLUG), indent=2)
     )

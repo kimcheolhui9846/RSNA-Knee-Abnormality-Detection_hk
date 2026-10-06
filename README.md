@@ -42,3 +42,4 @@ Windows에서 스마트 앱 컨트롤이 `.venv`의 실행 파일·DLL을 막으
 | exp004 | 공개 라벨 + DINOv2 ViT-S + 라벨별 attention + 2.5D | 0.703 | 0.054 | MCL 0.478 | 0.741 | 공개 test 0.9분 | #15 |
 | exp003r | exp002 모델 + 공개 LLM 라벨(v2), 보조 CV | 0.780 | 0.046 | Synovitis 0.673 | - | - | #17 |
 | exp005 | exp004 + lr↑·freeze↓·칸 풀링·질의 초기화 (백본 표현 붕괴) | 0.511 | 0.053 | Fracture 0.421 | - | - | #17 |
+| exp006 | 칸 이미지 DINOv2 (공개 상위 레시피 재구현: 130 mm·좌우·헤더 칸·3장 RGB·칸 attention·lr 8e-6) | 0.812 | 0.046 | Lateral OA 0.669 | 0.857 (exp002·003r과 앙상블) | 공개 test 1.8분 | #19 |

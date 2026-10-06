@@ -30,6 +30,7 @@ from src.data.dataset import slab_stack
 from src.data.dicom import load_series
 from src.data.headers import annotate, laterality, read_header
 from src.data.preprocess import preprocess_series
+from src.data.raptor_stack import SLOTS44, SLOTS64, build_stack, make_windows, window_centers
 from src.data.slot_image import SLOTS6, slot_image, slot_inputs
 from src.data.study_table import SLOTS, resample_depth, select_series
 from src.models import build_model
@@ -47,6 +48,11 @@ DATA_KEYS = (
     "img_out",
     "crop_mm",
     "slice_band",
+    "slots",
+    "span",
+    "img",
+    "res",
+    "k_eval",
 )
 log = logging.getLogger("infer")
 
@@ -136,10 +142,11 @@ class TestStudyDataset(Dataset):
         self.by_study = {sid: g for sid, g in series.groupby(ID_COL)}
         self.series_root = series_root
         self.cfgs = [cfgs] if isinstance(cfgs, dict) else list(cfgs)
-        sizes = {c["size"] for c in self.cfgs}
-        if len(sizes) != 1:
+        # Raptor 스택(exp007~)은 DICOM에서 따로 만든다. 나머지 묶음은 같은 size의 볼륨을 공유한다
+        sizes = {c["size"] for c in self.cfgs if c.get("input") != "raptor_stack"}
+        if len(sizes) > 1:
             raise ValueError(f"입력 묶음의 size가 다르다: {sizes}")
-        self.size = sizes.pop()
+        self.size = sizes.pop() if sizes else None
         self.need_headers = any(c.get("input") == "slot_image" for c in self.cfgs)
 
     def __len__(self) -> int:
@@ -220,12 +227,35 @@ class TestStudyDataset(Dataset):
                 mask[k] = True
         return image, mask
 
+    def _raptor_windows(self, cfg: dict, sid: str) -> tuple:
+        """DICOM → Raptor 스택(학습 코퍼스와 같은 규칙) → 고르게 뽑은 2.5D 창.
+
+        반환 `(k_eval, 3, res, res)`."""
+        rows = [r._asdict() for r in self.by_study.get(sid, pd.DataFrame()).itertuples(index=False)]
+        try:
+            vol, vmask = build_stack(
+                rows,
+                self.series_root / sid,
+                slots=SLOTS64 if cfg.get("slots") == "SLOTS64" else SLOTS44,
+                span=tuple(cfg.get("span", (0.15, 0.85))),
+                img=cfg.get("img", 336),
+                crop_mm=cfg.get("crop_mm", 140.0),
+            )
+        except Exception as e:  # noqa: BLE001 — 이 study만 fallback
+            log.warning("raptor 스택 실패 %s: %r", sid, e)
+            k, res = cfg["k_eval"], cfg["res"]
+            return np.zeros((k, 3, res, res), np.float32), np.zeros(1, bool)
+        image = make_windows(vol, window_centers(vmask, cfg["k_eval"]), cfg["res"]).numpy()
+        return image, np.array([bool(vmask.any())])
+
     def __getitem__(self, i: int) -> dict:
         sid = self.study_ids[i]
-        volumes, meta = self._read(sid)
+        volumes, meta = self._read(sid) if self.size is not None else ({}, pd.DataFrame())
         images, masks = [], []
         for cfg in self.cfgs:
-            if cfg.get("input") == "slot_image":
+            if cfg.get("input") == "raptor_stack":
+                image, mask = self._raptor_windows(cfg, sid)
+            elif cfg.get("input") == "slot_image":
                 image, mask = self._slot_images(cfg, volumes, meta)
             else:
                 image, mask = self._slices(cfg, sid, volumes, meta)
