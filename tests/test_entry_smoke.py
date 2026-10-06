@@ -35,4 +35,8 @@ def test_smoke_test_runs_for_every_experiment_config(config: Path, tmp_path: Pat
         config_path=str(config),
     )
     final = entry.train_model(cfg)
-    assert Path(final).is_file()
+    if "trainer: raptor_predict" in config.read_text(encoding="utf-8"):
+        # 예측 전용: 새 가중치 없이 train OOF만 남긴다
+        assert (tmp_path / "out" / "oof_pseudo.csv").is_file()
+    else:
+        assert Path(final).is_file()

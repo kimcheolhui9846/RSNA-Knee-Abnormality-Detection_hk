@@ -112,6 +112,49 @@ def train_model(cfg: Config) -> Path:
     config = yaml.safe_load(Path(cfg.config_path).read_text(encoding="utf-8"))
     data_dir = cfg.data_dir
 
+    if config.get("trainer") == "raptor_predict":  # exp009: fold 체크포인트로 train OOF 예측만
+        from huggingface_hub import hf_hub_download
+
+        from src.train import check_device
+        from src.train_raptor import make_synthetic_corpus, predict_folds
+
+        repo = config.get("checkpoint_repo", cfg.hf_repo_id)
+        fetch = lambda run: Path(  # noqa: E731
+            hf_hub_download(repo, f"runs/{run}/checkpoints/last.safetensors")
+        )
+        if cfg.smoke_test:
+            data_dir = cfg.output_dir / "synthetic_data"
+            make_synthetic_corpus(data_dir)
+            if config.get("labels_file", "labels.csv") != "labels.csv":
+                shutil.copyfile(data_dir / "labels.csv", data_dir / config["labels_file"])
+            config.update(corpus_dir="raptor_corpus", res=32, k_eval=6, batch_size=2, num_workers=0)
+            config["model"] = {**config["model"], "backbone": "resnet18", "grad_ckpt": False}
+            config["fold_checkpoints"] = {0: "smoke0", 1: "smoke1"}
+            from safetensors.torch import save_file
+
+            from src.models import build_model
+
+            smoke_ck = cfg.output_dir / "smoke_ck.safetensors"
+            m = build_model({**config["model"], "pretrained": False})
+            save_file(
+                {f"fold0.{k}": v.contiguous() for k, v in m.state_dict().items()}, str(smoke_ck)
+            )
+            fetch = lambda run: smoke_ck  # noqa: E731
+        result = predict_folds(
+            config,
+            data_dir=data_dir,
+            out_dir=cfg.output_dir,
+            fetch=fetch,
+            device=check_device(None),
+            heartbeat=heartbeat,
+        )
+        cfg.extra["result"] = {
+            k: result.get(k) for k in ("macro_auc", "pseudo_holdout_auc", "elapsed_sec")
+        }
+        return (
+            cfg.output_dir / "model.safetensors"
+        )  # 새 가중치 없음 (업로드는 없는 파일을 건너뛴다)
+
     if (
         config.get("trainer") == "raptor"
     ):  # exp007~: 공개 코퍼스 + Raptor 방식 (fold 없이 모델 하나)
