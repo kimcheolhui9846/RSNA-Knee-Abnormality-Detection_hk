@@ -20,9 +20,13 @@
 - 복구: `trainer: raptor_predict`(`predict_folds`) — fold 체크포인트로 그 fold의 pseudo study와 정답 58을 예측만 한다 (`configs/exp009_raptor_predict.yaml`).
   실제 fold 0 체크포인트가 모델에 빠짐없이 로드됨을 로컬에서 확인(`All keys matched`).
 
+- OOF 예측: Kaggle T4 34분(무료), 5-fold 평균 정답 58 0.9065, train 4,349 전체 OOF
+- 정제 라벨 `labels_refined.csv` (alpha 0.5): 정답 58 기준 라벨 품질 0.923 (판독문 라벨 0.893). 상세 `experiments/exp009.md`
+- `configs/exp011_raptor_refined.yaml`: exp007 + `labels_file: labels_refined.csv` (RunPod 충전 후 실행)
+
 ## 4. 미해결 문제
 - 정제 비율을 정답 58로 정하면 그 58 점수가 부푼다 → 비율은 0.5 고정을 기본으로, 58은 확인용으로만 쓴다
 
 ## 5. 다음 작업자가 할 일
-1. 5개 `oof_pseudo.csv`를 모아 train 전체 OOF → 정제 라벨 파일(`labels_refined.csv`) 생성, HF 데이터셋에 추가
+1. ~~정제 라벨 생성~~ 완료. HF 업로드는 요청 한도(429)로 보류 중이면 다시 올린다
 2. 정제 라벨로 Raptor 재학습, 5개 fold 모델을 앙상블 후보로 평가
