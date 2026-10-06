@@ -20,7 +20,9 @@
 - `ruff check`, `ruff format --check` 통과. `pytest -q` 115 passed, 2 skipped
 - 새 테스트: 코퍼스 = study별 `build_stack()` 결과(비트 단위), `open_corpus`로 열림, 칸 배치; 중단 후 이어 하기(끝난 study 재계산 없음, 결과 동일)
 - 로컬 속도: 작업자 16에서 48 study 102초(입출력이 병목, WSL `/mnt/d`)
-- 전체 4,407 study 생성: (진행 중)
+- 전체 4,407 study 생성 완료: 작업자 8, 8,282초(2.3시간), 31.8 GB, 빈 study 0, study당 유효 슬라이스 최소 42 / 평균 61.6 (64장 중)
+  - 첫 시도(작업자 24)는 PC 메모리 부족으로 강제 종료 → 작업자 8 + 이어 하기로 다시 실행
+- HF 비공개 데이터셋 `cheolhhh9846/rsna-knee-raptor-corpus`의 `raptor_corpus64/`에 업로드
 
 ## 4. 미해결 문제
 - 크기 약 32 GB(4,407×64×336×336) → HF 업로드·Pod 다운로드 시간이 든다
