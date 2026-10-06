@@ -15,7 +15,10 @@
 
 ## 3. 결과
 - `ruff check` 통과, `pytest -q` 통과 (smoke가 새 config 5개 포함)
-- RunPod 결과: (실행 후 기록)
+- RunPod 1차(2026-10-06 00:24 UTC, 4090 ×5): **5대 모두 02:31 UTC에 동시에 SIGTERM**(epoch 13/16, exit 143). 상한(5h)·정체 감지가 아님 → RunPod 쪽 원인으로 추정(잔액/콘솔), 확인 필요.
+  epoch마다 저장한 `checkpoints/last.safetensors`(epoch 13)가 HF에 남음. 학습이 끝나야 만들어지는 `oof_pseudo.csv`는 없음.
+- 복구: `trainer: raptor_predict`(`predict_folds`) — fold 체크포인트로 그 fold의 pseudo study와 정답 58을 예측만 한다 (`configs/exp009_raptor_predict.yaml`).
+  실제 fold 0 체크포인트가 모델에 빠짐없이 로드됨을 로컬에서 확인(`All keys matched`).
 
 ## 4. 미해결 문제
 - 정제 비율을 정답 58로 정하면 그 58 점수가 부푼다 → 비율은 0.5 고정을 기본으로, 58은 확인용으로만 쓴다
