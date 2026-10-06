@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from torch.utils.data import DataLoader
 
 from src.constants import ID_COL, LABELS
@@ -224,6 +224,101 @@ def run_raptor(
         json.dumps(result, indent=2, default=float), encoding="utf-8"
     )
     log.info("SWA(마지막 %d epoch) gold macro AUC %.4f", len(kept), macro)
+    return result
+
+
+def predict_folds(
+    config: dict,
+    data_dir: Path,
+    out_dir: Path,
+    fetch: Callable[[str], Path],
+    device: str = "cpu",
+    heartbeat: Callable[[], None] | None = None,
+) -> dict:
+    """fold별 Raptor 체크포인트로 그 fold의 pseudo study(학습에서 뺀 것)와 정답 58을 예측한다.
+
+    `config["fold_checkpoints"]`: {fold: run_id}. `fetch(run_id)` → 로컬 체크포인트 경로
+    (`fold0.` 접두사 가중치, `run_raptor`가 저장하는 형식).
+    결과: `oof_pseudo.csv`(train 전체 이미지 OOF), `oof.csv`(정답 58, fold 평균), `metrics.json`.
+    """
+    data_dir, out_dir = Path(data_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    heartbeat = heartbeat or (lambda: None)
+    started = time.time()
+    amp = config.get("amp", True) and device == "cuda"
+    vols, masks, rows = open_corpus(data_dir / config.get("corpus_dir", "raptor_corpus"))
+    labels = pd.read_csv(data_dir / config.get("labels_file", "labels.csv"), dtype={ID_COL: str})
+    table = label_table(labels)
+    table = table[table[ID_COL].isin(rows)].reset_index(drop=True)
+    gold = table[(table["source"] == "gt").to_numpy()].reset_index(drop=True)
+    pool = table[(table["source"] != "gt").to_numpy()]
+    folds = pd.read_csv(data_dir / "folds.csv", dtype={ID_COL: str}).set_index(ID_COL)["fold"]
+
+    def loader(t: pd.DataFrame) -> DataLoader:
+        ds = CorpusWindows(t, vols, masks, rows, config["res"], config["k_eval"], False, 0)
+        bs = max(1, config["batch_size"] // 2)
+        return DataLoader(ds, batch_size=bs, shuffle=False, num_workers=config["num_workers"])
+
+    held_parts, gold_preds, per_fold = [], [], {}
+    for fold, run_id in sorted(config["fold_checkpoints"].items(), key=lambda kv: int(kv[0])):
+        state = load_file(str(fetch(str(run_id))))
+        model = build_model({**config["model"], "pretrained": False})
+        model.load_state_dict({k.removeprefix("fold0."): v for k, v in state.items()})
+        model = model.to(device)
+        held = pool[(pool[ID_COL].map(folds) == int(fold)).to_numpy()].reset_index(drop=True)
+        p_held = _predict(model, loader(held), device, amp)
+        p_gold = _predict(model, loader(gold), device, amp)
+        heartbeat()
+        part = pd.DataFrame(p_held, columns=list(LABELS))
+        part.insert(0, "fold", int(fold))
+        part.insert(0, ID_COL, held[ID_COL].to_numpy())
+        held_parts.append(part)
+        gold_preds.append(p_gold)
+        per_fold[int(fold)] = macro_auc(np.stack(gold["labels"]), p_gold)[0]
+        log.info(
+            "fold %s (%s): held %d, gold macro AUC %.4f",
+            fold,
+            run_id,
+            len(held),
+            per_fold[int(fold)],
+        )
+        del model, state
+        if device == "cuda":
+            torch.cuda.empty_cache()
+
+    oof_pseudo = pd.concat(held_parts, ignore_index=True)
+    oof_pseudo.to_csv(out_dir / "oof_pseudo.csv", index=False)
+    p_gold = np.mean(gold_preds, axis=0)
+    macro, per_label = macro_auc(np.stack(gold["labels"]), p_gold)
+    oof = pd.DataFrame(p_gold, columns=list(LABELS))
+    oof.insert(0, "fold", 0)
+    oof.insert(0, ID_COL, gold[ID_COL].to_numpy())
+    oof.to_csv(out_dir / "oof.csv", index=False)
+    y_p = np.stack(pool.set_index(ID_COL).loc[oof_pseudo[ID_COL], "labels"])
+    m_p = np.stack(pool.set_index(ID_COL).loc[oof_pseudo[ID_COL], "label_mask"])
+    y_bin = np.where(m_p, (y_p >= 0.5).astype(float), np.nan)
+    pseudo_auc, _ = macro_auc(y_bin, oof_pseudo[list(LABELS)].to_numpy())
+    result = {
+        "macro_auc": macro,
+        "per_label_auc": per_label,
+        "per_fold_gold_auc": per_fold,
+        "pseudo_holdout_auc": pseudo_auc,
+        "n_pseudo": len(oof_pseudo),
+        "n_pool": len(pool),
+        "elapsed_sec": round(time.time() - started, 1),
+        "device": device,
+        "config": config,
+    }
+    (out_dir / "metrics.json").write_text(
+        json.dumps(result, indent=2, default=float), encoding="utf-8"
+    )
+    log.info(
+        "fold 평균 gold macro AUC %.4f, pseudo OOF %d/%d (라벨 대비 AUC %.4f)",
+        macro,
+        len(oof_pseudo),
+        len(pool),
+        pseudo_auc,
+    )
     return result
 
 
