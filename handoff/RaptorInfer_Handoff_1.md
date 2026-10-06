@@ -28,6 +28,9 @@
   - 제출 `56856929`: exp007 단독 (`rsna-knee-submit` v7, 공개 test 3건 GPU 35.7초, fallback 0) — **Public LB 0.918** (이전 최고 0.857, 공개 원작자 단일 0.924)
   - 제출 `56857169`: 공개 파이프라인 0.8 + exp007 0.2 (`rsna-knee-public-blend` v2, 공개 노트북 셀은 v1과 동일, 우리 단계 0.5분) — 점수 채점 후 기록
 
+- 2026-10-06: 3모델(exp007 + exp008-v2 + exp008-mean, 같은 비중 순위 평균) 가중치를 **새 데이터셋** `kimche12/rsna-knee-weights-r3`로 올림
+  (채점 중인 제출이 쓰는 `rsna-knee-weights`를 바꾸지 않으려고). `rsna-knee-submit` v8 → 제출 `56864285` **Public LB 0.930**
+
 ## 4. 미해결 문제
 - 혼합 비율 `w`는 정답 58로 정할 수 없다(공개 파이프라인을 train에서 돌리지 않음) → LB로 확인, 제출 횟수 제한 주의
 
