@@ -22,11 +22,13 @@
 
 - OOF 예측: Kaggle T4 34분(무료), 5-fold 평균 정답 58 0.9065, train 4,349 전체 OOF
 - 정제 라벨 `labels_refined.csv` (alpha 0.5): 정답 58 기준 라벨 품질 0.923 (판독문 라벨 0.893). 상세 `experiments/exp009.md`
-- `configs/exp011_raptor_refined.yaml`: exp007 + `labels_file: labels_refined.csv` (RunPod 충전 후 실행)
+- `configs/exp011_raptor_refined.yaml`: exp007 + `labels_file: labels_refined.csv`
+- **exp011 결과 (2026-10-12, RunPod 4090 3.15시간, run `20261012-070019-fcf927`): 정답 58 0.9157** (exp007 0.9037). 기존 3모델과 같은 비중 순위 평균 0.9191 (기존 0.9125). 라벨별 표는 `experiments/exp009.md`
 
 ## 4. 미해결 문제
 - 정제 비율을 정답 58로 정하면 그 58 점수가 부푼다 → 비율은 0.5 고정을 기본으로, 58은 확인용으로만 쓴다
 
 ## 5. 다음 작업자가 할 일
 1. ~~정제 라벨 생성~~ 완료. HF 업로드는 요청 한도(429)로 보류 중이면 다시 올린다
-2. 정제 라벨로 Raptor 재학습, 5개 fold 모델을 앙상블 후보로 평가
+2. ~~정제 라벨로 Raptor 재학습~~ 완료 (exp011). 5개 fold 모델은 4모델 앙상블에 더해도 오르지 않아(0.9186) 넣지 않는다
+3. 4모델(exp007·v2·mean·exp011) 같은 비중 앙상블 제출, 정제 라벨 변형(seed, 64장 코퍼스) 추가 학습
