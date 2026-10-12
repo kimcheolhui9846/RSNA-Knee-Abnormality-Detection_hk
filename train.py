@@ -94,6 +94,38 @@ def heartbeat() -> None:
             pass
 
 
+def fetch_data(config: dict, data_dir: Path, beat=heartbeat) -> None:
+    """`data_repo`(HF 데이터셋)에서 이 config가 쓰는 코퍼스·라벨·fold 파일만 `data_dir`로 받는다.
+
+    데이터셋 전체(코퍼스 2종, 54 GB)를 받으면 Pod 디스크가 모자라 필요한 것만 고른다.
+    받는 동안 heartbeat를 계속 보낸다 (정체 감지에 걸리지 않게).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as Pending
+
+    from huggingface_hub import snapshot_download
+
+    patterns = [
+        f"{config.get('corpus_dir', 'raptor_corpus')}/*",
+        config.get("labels_file", "labels.csv"),
+        "folds.csv",
+    ]
+    with ThreadPoolExecutor(1) as pool:
+        job = pool.submit(
+            snapshot_download,
+            config["data_repo"],
+            repo_type="dataset",
+            local_dir=str(data_dir),
+            allow_patterns=patterns,
+        )
+        while True:
+            try:
+                job.result(timeout=30)
+                break
+            except Pending:
+                beat()
+
+
 # ---------------------------------------------------------------------------
 # 학습 (이 함수만 채우면 된다)
 # ---------------------------------------------------------------------------
@@ -182,6 +214,8 @@ def train_model(cfg: Config) -> Path:
                 "pretrained": False,
                 "grad_ckpt": False,
             }
+        elif config.get("data_repo"):
+            fetch_data(config, data_dir)
         result = run_raptor(
             config,
             data_dir=data_dir,

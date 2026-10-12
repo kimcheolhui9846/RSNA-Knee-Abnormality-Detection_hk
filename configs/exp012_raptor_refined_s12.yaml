@@ -9,6 +9,7 @@ model:
   dropout: 0.2
   grad_ckpt: true            # bs 8 × 12창 × 384px를 24 GB에 넣는다 (공개 측정 23.7 GB)
 
+data_repo: cheolhhh9846/rsna-knee-raptor-corpus   # 이 config가 쓰는 코퍼스·라벨만 받는다 (전체 54 GB는 Pod 디스크에 안 들어감)
 corpus_dir: raptor_corpus
 
 # Kaggle 추론(DICOM → 같은 스택)용. 학습은 코퍼스를 그대로 읽는다
