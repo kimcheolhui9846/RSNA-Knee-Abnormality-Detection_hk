@@ -24,6 +24,9 @@
 - 정제 라벨 `labels_refined.csv` (alpha 0.5): 정답 58 기준 라벨 품질 0.923 (판독문 라벨 0.893). 상세 `experiments/exp009.md`
 - `configs/exp011_raptor_refined.yaml`: exp007 + `labels_file: labels_refined.csv`
 - **exp011 결과 (2026-10-12, RunPod 4090 3.15시간, run `20261012-070019-fcf927`): 정답 58 0.9157** (exp007 0.9037). 기존 3모델과 같은 비중 순위 평균 0.9191 (기존 0.9125). 라벨별 표는 `experiments/exp009.md`
+- 4모델 앙상블 제출 `57104106`: **Public LB 0.933** (기존 3모델 0.930)
+- **exp012 (정제 라벨, seed 12, A6000 4.8시간, run `20261012-111146-8fc5f9`): 정답 58 0.9149.** 5모델 같은 비중 0.9209 → 제출(`rsna-knee-submit` v10, 가중치 `kimche12/rsna-knee-weights-r5`)
+- `train.py` `fetch_data` + config `data_repo`: Pod에서 그 config가 쓰는 코퍼스·라벨만 HF에서 받는다 (`tests/test_fetch_data.py`). 데이터셋 전체 54 GB가 일부 호스트 디스크에 안 들어가 추가
 
 ## 4. 미해결 문제
 - 정제 비율을 정답 58로 정하면 그 58 점수가 부푼다 → 비율은 0.5 고정을 기본으로, 58은 확인용으로만 쓴다
