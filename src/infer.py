@@ -30,7 +30,7 @@ from src.data.dataset import slab_stack
 from src.data.dicom import load_series
 from src.data.headers import annotate, laterality, read_header
 from src.data.preprocess import preprocess_series
-from src.data.raptor_stack import SLOTS44, SLOTS64, build_stack, make_windows, window_centers
+from src.data.raptor_stack import SLOT_SETS, build_stack, make_windows, window_centers
 from src.data.slot_image import SLOTS6, slot_image, slot_inputs
 from src.data.study_table import SLOTS, resample_depth, select_series
 from src.models import build_model
@@ -236,7 +236,7 @@ class TestStudyDataset(Dataset):
             vol, vmask = build_stack(
                 rows,
                 self.series_root / sid,
-                slots=SLOTS64 if cfg.get("slots") == "SLOTS64" else SLOTS44,
+                slots=SLOT_SETS[cfg.get("slots", "SLOTS44")],
                 span=tuple(cfg.get("span", (0.15, 0.85))),
                 img=cfg.get("img", 336),
                 crop_mm=cfg.get("crop_mm", 140.0),
