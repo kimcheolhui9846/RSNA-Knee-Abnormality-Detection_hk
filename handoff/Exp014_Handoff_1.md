@@ -34,3 +34,10 @@
 - run `20261014-090958-e84f18` (4090, 약 13분): 정답 58 평가에서 `RuntimeError: Expected canUse32BitIndexMath(...)` (CoAtNet 앞단 `conv2_kxk`)
 - 원인: 평가 배치가 `batch_size // 2` = 4 study 고정이라 k_eval 42에서 168장이 한 번에 백본에 들어가 텐서 원소 수가 2³¹을 넘었다 (exp011은 k_eval 24 → 96장)
 - 수정: `eval_batch_size` — 평가 때 한 번에 넣는 창 수가 학습 때(`batch_size × k` = 96장)를 넘지 않게 study 수를 줄인다 (k_eval 42 → 2 study, 84장). k_eval 24 설정은 그대로 4
+
+## 7. 학습 결과 (2026-10-14, RunPod 4090 3.1시간 학습, run `20261014-092452-bbe4f5`)
+- 정답 58 (k=42, 참고용): epoch 8 0.9184 → epoch 12–16 0.923 부근에서 평평, **SWA(14–16) 0.9231** — 우리 단일 모델 최고 (exp011 0.9157, nartaa 가중치 우리 코퍼스 0.918)
+- 라벨별 (SWA): ACL 0.969, MCL 0.968, Medial Meniscus 0.976, Lateral Meniscus 0.856, Medial OA 0.971, Lateral OA 0.847, PF OA 0.847,
+  Effusion 0.984, Synovitis 0.830, Baker's 0.978, Contusion 0.941, Fracture 0.910
+- 주의: exp013(정답 58 0.917)은 0.956 혼합에 15% 넣었을 때 LB 0.955로 떨어졌다. 정답 58은 혼합 효과를 예측하지 못한다 → LB로 판정
+- Kaggle: 추론 `feat/infer-slots96`(PR #30), 가중치 `kimche12/rsna-knee-weights-e14`, 혼합 노트북 `kimche12/rsna-knee-public956-e14`
