@@ -87,3 +87,17 @@ def test_load_public_raptor_renames_keys(tmp_path: Path) -> None:
     torch.save({"model": {**public, "extra.w": torch.zeros(1)}}, tmp_path / "bad.pt")
     with pytest.raises(RuntimeError):  # 남는 키가 있으면 실패한다
         load_public_raptor(build_model(cfg), tmp_path / "bad.pt")
+
+
+def test_mirror_windows_flips_by_slot_and_is_an_involution() -> None:
+    from src.data.raptor_stack import mirror_windows
+
+    x = torch.arange(4 * 3 * 2 * 2, dtype=torch.float32).view(4, 3, 2, 2)
+    sizes = [3, 3, 2, 2]  # 시상 0–2, 시상 3–5, 관상 6–7, 축상 8–9
+    centers = [1, 4, 6, 8]
+    y = mirror_windows(x, centers, sizes)
+    assert torch.equal(y[0], x[0].flip(0)) and torch.equal(
+        y[1], x[1].flip(0)
+    )  # 시상: 채널(슬라이스) 순서
+    assert torch.equal(y[2], x[2].flip(-1)) and torch.equal(y[3], x[3].flip(-1))  # 관상·축상: 가로
+    assert torch.equal(mirror_windows(y, centers, sizes), x)  # 두 번 하면 원래대로

@@ -118,6 +118,10 @@ def run_raptor(
     amp = config.get("amp", True) and device == "cuda"
 
     vols, masks, rows = open_corpus(data_dir / config.get("corpus_dir", "raptor_corpus"))
+    if config.get("mirror_slots") and sum(config["mirror_slots"]) != masks.shape[1]:
+        raise ValueError(
+            f"mirror_slots 합 {sum(config['mirror_slots'])} != 코퍼스 장수 {masks.shape[1]}"
+        )
     labels = pd.read_csv(data_dir / config.get("labels_file", "labels.csv"), dtype={ID_COL: str})
     table = label_table(labels)
     table = table[table[ID_COL].isin(rows)].reset_index(drop=True)
@@ -140,7 +144,17 @@ def run_raptor(
 
     def loader(t: pd.DataFrame, train: bool) -> DataLoader:
         k = config["k"] if train else config["k_eval"]
-        ds = CorpusWindows(t, vols, masks, rows, config["res"], k, train, config["seed"])
+        ds = CorpusWindows(
+            t,
+            vols,
+            masks,
+            rows,
+            config["res"],
+            k,
+            train,
+            config["seed"],
+            mirror_slots=config.get("mirror_slots"),
+        )
         bs = config["batch_size"] if train else max(1, config["batch_size"] // 2)
         return DataLoader(
             ds,
