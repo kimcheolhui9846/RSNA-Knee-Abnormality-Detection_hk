@@ -101,3 +101,11 @@ def test_mirror_windows_flips_by_slot_and_is_an_involution() -> None:
     )  # 시상: 채널(슬라이스) 순서
     assert torch.equal(y[2], x[2].flip(-1)) and torch.equal(y[3], x[3].flip(-1))  # 관상·축상: 가로
     assert torch.equal(mirror_windows(y, centers, sizes), x)  # 두 번 하면 원래대로
+
+
+def test_eval_batch_size_caps_windows_per_batch() -> None:
+    from src.train_raptor import eval_batch_size
+
+    assert eval_batch_size({"batch_size": 8, "k": 12, "k_eval": 24}) == 4  # exp011: 그대로
+    assert eval_batch_size({"batch_size": 8, "k": 12, "k_eval": 42}) == 2  # exp014: 84장 ≤ 96장
+    assert eval_batch_size({"batch_size": 2, "k": 4, "k_eval": 94}) == 1

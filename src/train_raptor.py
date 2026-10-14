@@ -81,6 +81,15 @@ def _predict(model, loader, device: str, amp: bool) -> np.ndarray:
     return np.concatenate(out) if out else np.zeros((0, len(LABELS)), np.float32)
 
 
+def eval_batch_size(config: dict) -> int:
+    """평가 배치(study 수). 한 번에 백본에 들어가는 창 수가 학습 때(`batch_size × k`)를 넘지 않게.
+
+    exp014: k_eval 42 × 4 study = 168장이 CoAtNet 앞단 conv에서 텐서 32비트 인덱스 한도를 넘었다.
+    """
+    by_windows = config["batch_size"] * config["k"] // config["k_eval"]
+    return max(1, min(config["batch_size"] // 2, by_windows))
+
+
 def load_public_raptor(model: torch.nn.Module, path: Path) -> None:
     """공개 Raptor 체크포인트(`{"model": state_dict}`, nartaa 등)를 우리 `KneeRaptor`에 불러온다.
 
@@ -155,7 +164,7 @@ def run_raptor(
             config["seed"],
             mirror_slots=config.get("mirror_slots"),
         )
-        bs = config["batch_size"] if train else max(1, config["batch_size"] // 2)
+        bs = config["batch_size"] if train else eval_batch_size(config)
         return DataLoader(
             ds,
             batch_size=bs,
