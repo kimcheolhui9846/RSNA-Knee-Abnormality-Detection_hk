@@ -36,6 +36,15 @@ SLOTS64 = [
     ("Coronal", 0, 8),
     ("Axial", -1, 12),
 ]
+# 공개 nartaa Raptor(0.949)의 96장 코퍼스: 구간 2–98%, 원본 384 px
+# (`build_stack(..., SLOTS96, (0.02, 0.98), 384)`, 그 추론 코드와 비트 단위 일치 확인)
+SLOTS96 = [
+    ("Sagittal", 1, 26),
+    ("Sagittal", 0, 22),
+    ("Coronal", 1, 18),
+    ("Coronal", 0, 12),
+    ("Axial", -1, 18),
+]
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 

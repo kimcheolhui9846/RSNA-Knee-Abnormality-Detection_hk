@@ -19,10 +19,10 @@ import numpy as np
 import pandas as pd
 
 from src.constants import ID_COL
-from src.data.raptor_stack import SLOTS44, SLOTS64, build_stack
+from src.data.raptor_stack import SLOTS44, SLOTS64, SLOTS96, build_stack
 
 log = logging.getLogger(__name__)
-SLOT_SETS = {"SLOTS44": SLOTS44, "SLOTS64": SLOTS64}
+SLOT_SETS = {"SLOTS44": SLOTS44, "SLOTS64": SLOTS64, "SLOTS96": SLOTS96}
 
 
 def study_series(series_csv: Path) -> dict[str, list[dict]]:
