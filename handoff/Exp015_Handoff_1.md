@@ -18,11 +18,16 @@
 
 ## 3. 결과
 - 설정: `configs/exp015_raptor96_dread.yaml` (exp014와의 차이는 `labels_file`, `seed`, 주석뿐)
-- 학습: (실행 후 기록)
+- 학습: RunPod 4090, run `20261015-011530-d8299e`, 학습 3.2시간 (commit 8522e80)
+- 정답 58 (k=42, 참고용): epoch 9 0.911 → epoch 13–16 0.920 부근에서 평평, **SWA(14–16) 0.9197** (exp014 0.9231, exp007 0.9037)
+- 라벨별 (SWA): ACL 0.973, MCL 0.977, Medial Meniscus 0.975, Lateral Meniscus 0.853, Medial OA 0.981, Lateral OA 0.863, PF OA 0.838,
+  Effusion 0.975, Synovitis 0.805, Baker's 0.966, Contusion 0.907, Fracture 0.924
+- Kaggle: 가중치 `kimche12/rsna-knee-weights-e15`, 혼합 노트북 `kimche12/rsna-knee-public956-e15` (PR #31 생성기, 공개 0.85 + exp015 0.15)
+- LB: (제출 후 기록)
 
 ## 4. 미해결 문제
 - 정답 58 점수가 혼합 효과를 예측하지 못하므로, 학습이 끝나도 LB 제출 전까지는 판단할 수 없다.
 
 ## 5. 다음 작업자가 할 일
-1. 학습이 끝나면 가중치를 `kimche12/rsna-knee-weights-e15`로 올린다.
-2. `kaggle/build_public_blend.py --weight 0.15 --kernel-slug rsna-knee-public956-e15 --weights-slug rsna-knee-weights-e15`(PR #31)로 혼합 노트북을 만들어 LB를 확인한다.
+1. (완료) 가중치 `kimche12/rsna-knee-weights-e15` 업로드
+2. (완료) `kaggle/build_public_blend.py --weight 0.15 --kernel-slug rsna-knee-public956-e15 --weights-slug rsna-knee-weights-e15`(PR #31)로 혼합 노트북 생성 → LB 확인
