@@ -41,3 +41,8 @@
   Effusion 0.984, Synovitis 0.830, Baker's 0.978, Contusion 0.941, Fracture 0.910
 - 주의: exp013(정답 58 0.917)은 0.956 혼합에 15% 넣었을 때 LB 0.955로 떨어졌다. 정답 58은 혼합 효과를 예측하지 못한다 → LB로 판정
 - Kaggle: 추론 `feat/infer-slots96`(PR #30), 가중치 `kimche12/rsna-knee-weights-e14`, 혼합 노트북 `kimche12/rsna-knee-public956-e14`
+
+## 8. 0.956 혼합 LB (2026-10-14)
+- 제출 57182823: 공개 0.956 노트북 0.85 + exp014 0.15 (순위 혼합) → **Public LB 0.955** (공개 그대로 0.956보다 낮음, exp013 혼합과 같음)
+- 정답 58 최고(0.923)여도 혼합에는 도움이 되지 않았다 → 정제 라벨 모델의 추가 학습은 멈추고 공개 0.956 그대로를 최종 후보 1로 둔다
+- 혼합 노트북 생성: PR #31 (`kaggle/build_public_blend.py --kernel-slug rsna-knee-public956-e14 --weights-slug rsna-knee-weights-e14`)
