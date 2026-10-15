@@ -23,11 +23,15 @@
 - 라벨별 (SWA): ACL 0.973, MCL 0.977, Medial Meniscus 0.975, Lateral Meniscus 0.853, Medial OA 0.981, Lateral OA 0.863, PF OA 0.838,
   Effusion 0.975, Synovitis 0.805, Baker's 0.966, Contusion 0.907, Fracture 0.924
 - Kaggle: 가중치 `kimche12/rsna-knee-weights-e15`, 혼합 노트북 `kimche12/rsna-knee-public956-e15` (PR #31 생성기, 공개 0.85 + exp015 0.15)
-- LB: (제출 후 기록)
+- LB: 제출 57217206 (공개 0.956 노트북 0.85 + exp015 0.15) → **Public LB 0.955** (공개 그대로 0.956보다 낮음, exp013·exp014 혼합과 같음)
+- 결론: 라벨을 공개 라벨로 바꿔도 혼합에서 떨어진다 → **정제 라벨은 원인이 아니다**. 우리 Raptor 계열(44장·96장, 정제·공개 라벨, nartaa 이어 학습)을 15% 섞으면 모두 0.955였다.
+  5모델 10% 혼합(57166654)이 0.956을 지킨 것은 비율이 낮았기 때문일 가능성이 크다.
 
 ## 4. 미해결 문제
+- 우리 모델이 혼합을 깎는 원인은 찾지 못했다. 남은 후보: 공개 두 계열(nartaa Raptor + R7)이 이미 같은 정보를 담고 있어 우리 모델은 잡음만 더한다 (OAI·fastMRI 보조 학습, 4-fold 앙상블 차이)
 - 정답 58 점수가 혼합 효과를 예측하지 못하므로, 학습이 끝나도 LB 제출 전까지는 판단할 수 없다.
 
 ## 5. 다음 작업자가 할 일
 1. (완료) 가중치 `kimche12/rsna-knee-weights-e15` 업로드
 2. (완료) `kaggle/build_public_blend.py --weight 0.15 --kernel-slug rsna-knee-public956-e15 --weights-slug rsna-knee-weights-e15`(PR #31)로 혼합 노트북 생성 → LB 확인
+3. 우리 모델 혼합은 접고 공개 0.956 그대로(57165935)를 최종 후보로 둔다. 추가 학습은 하지 않는다.
