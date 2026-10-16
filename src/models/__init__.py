@@ -7,7 +7,10 @@ if TYPE_CHECKING:  # torch는 모델을 만들 때만 import한다 (CI의 기본
 
 
 def build_model(cfg: dict) -> nn.Module:
-    """config `model` 절 → 모델. `name`: "baseline"(기본, exp001–003) | "dino_attn"(exp004~)."""
+    """config `model` 절 → 모델.
+
+    `name`: "baseline"(기본, exp001–003) | "dino_attn"(exp004~) | "slot_dino"(exp006~).
+    """
     kwargs = {k: v for k, v in cfg.items() if k != "name"}
     name = cfg.get("name", "baseline")
     if name == "baseline":
@@ -18,4 +21,8 @@ def build_model(cfg: dict) -> nn.Module:
         from src.models.dino import KneeDinoAttn
 
         return KneeDinoAttn(**kwargs)
+    if name == "slot_dino":
+        from src.models.slot_dino import KneeSlotDino
+
+        return KneeSlotDino(**kwargs)
     raise ValueError(f"unknown model name: {name}")
