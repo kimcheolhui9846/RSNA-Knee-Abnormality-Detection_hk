@@ -11,6 +11,12 @@ uv sync --extra train   # + torch / timm (CUDA 12.8)
 uv run ruff check . && uv run pytest -q
 ```
 
+데이터는 `RSNA_DATA_DIR` 환경변수, Kaggle의 `/kaggle/input/rsna-knee-abnormality-detection`,
+저장소 안 `rsna-knee-abnormality-detection/` 순서로 찾는다 (`src/paths.py`).
+
+Windows에서 스마트 앱 컨트롤이 `.venv`의 실행 파일·DLL을 막으면 WSL에서 실행한다.
+가상환경은 WSL 홈에 따로 둔다: `UV_PROJECT_ENVIRONMENT=~/.venvs/rsna-knee uv run python -m pytest -q`
+
 ## 구조
 
 | 경로 | 내용 |
