@@ -34,9 +34,13 @@
 | 57169923 | + exp013 15% | `kimche12/rsna-knee-public956-e13` | 0.955 |
 | 57182823 | + exp014 15% | `kimche12/rsna-knee-public956-e14` | 0.955 |
 | 57217206 | + exp015 15% (공개 라벨, PR #32) | `kimche12/rsna-knee-public956-e15` | 0.955 |
+| 57230563 | 공개 0.957 그대로 (heliosli `0-9576-latest-public-dataset-score-in-one-click`) | `kimche12/rsna-knee-public957` | **0.957** |
 
 - 0.943 공개 파이프라인에 섞었을 때도 같은 양상이었다 (그대로 0.943, 섞으면 0.943 / 0.942 / 0.941).
 - 정답 58 점수(exp014 0.923이 우리 최고)는 혼합 효과를 예측하지 못한다 → 판정은 LB로 한다.
+- 0.957 노트북은 0.956과 R 단계만 다르다: R7 대신 R6 묶음(`fe055406fad6a12f`) + 좌우 뒤집기 TTA. Raptor 384/224 단계와 비율은 같다.
+- 주의: `heliosli/rsna-knee-r6-frozen-fe055406`는 2026-10-14에 버전 2(R7 묶음)로 덮어써졌다. `kernels push`는 데이터셋 버전을 고정하지 못해 최신 버전이 붙고, 노트북의 묶음 id 검사에서 멈춘다.
+  버전 1 파일을 하나씩 받아(`kaggle datasets download heliosli/rsna-knee-r6-frozen-fe055406/1 -f <파일>`) manifest sha256을 대조한 뒤, 비공개 데이터셋 `kimche12/rsna-knee-r6-frozen-fe055406`으로 올려 붙였다.
 
 ### 재현
 ```
@@ -52,6 +56,6 @@ python kaggle/build_public_blend.py --public <pub> --user kimche12 --weight 0.15
 - OAI 허용 여부의 후속 질문(지역 제한)에 호스트 답이 아직 없다.
 
 ## 5. 다음 작업자가 할 일
-1. 공개 0.956 그대로(57165935)를 최종 후보 1로 둔다. 정제 라벨 모델의 추가 학습·혼합은 여기서 멈춘다 (exp013·exp014·exp015 모두 0.955).
+1. 공개 0.957 그대로(57230563)를 최종 후보 1로 둔다. 정제 라벨 모델의 추가 학습·혼합은 여기서 멈춘다 (exp013·exp014·exp015 모두 0.955).
 2. 가중치 데이터셋은 폴더째 올려야 한다: `kaggle datasets create/version -p . -r tar` (기본값은 하위 폴더를 건너뛴다). 제출 전에 노트북 로그에서 `blended:` 줄을 확인한다.
 3. 최종 2개 선택(마감 2026-10-22): LB 최고 1개 + 규칙상 가장 안전한 1개. 선택 전에 OAI 관련 Discussion을 다시 확인한다.
