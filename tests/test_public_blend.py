@@ -58,6 +58,24 @@ def test_build_keeps_public_cells_and_appends_ours(tmp_path: Path) -> None:
     assert meta["enable_internet"] is False and meta["is_private"] is True
 
 
+def test_build_with_custom_slugs_and_credits(tmp_path: Path) -> None:
+    out = build(
+        _public(tmp_path),
+        "me",
+        0.15,
+        tmp_path / "out",
+        kernel_slug="pub956-e14",
+        weights_slug="weights-e14",
+        credits="nartaa, heliosli",
+    )
+    nb = json.loads((out / "pub956-e14.ipynb").read_text(encoding="utf-8"))
+    head = "".join(nb["cells"][0]["source"])
+    assert "`someone/pub`" in head and "nartaa, heliosli" in head and "me/weights-e14" in head
+    meta = json.loads((out / "kernel-metadata.json").read_text())
+    assert meta["id"] == "me/pub956-e14" and meta["code_file"] == "pub956-e14.ipynb"
+    assert meta["dataset_sources"][-1] == "me/weights-e14"
+
+
 def _run_blend(work: Path, weight: float, ours_ok: bool) -> pd.DataFrame:
     ids = [f"s{i}" for i in range(4)]
     pub = pd.DataFrame(

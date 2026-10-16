@@ -11,6 +11,9 @@
 
 실행: `python kaggle/build_public_blend.py --public <pulled 폴더> --user <kaggle 사용자명>
        --weight 0.1`
+공개 0.956 노트북 + exp014 예: `--weight 0.15 --kernel-slug rsna-knee-public956-e14
+       --weights-slug rsna-knee-weights-e14
+       --credits "varshithakolupuri, nartaa, heliosli, dreaddevelopment"`
 업로드(사용자 승인 후): `kaggle kernels push -p <out>`
 """
 
@@ -21,16 +24,20 @@ from pathlib import Path
 
 KERNEL_SLUG = "rsna-knee-public-blend"
 CODE_SLUG, WEIGHTS_SLUG = "rsna-knee-code", "rsna-knee-weights"
+DEFAULT_CREDITS = (
+    "mattiaangeli, antoinegg1, prvsiyan, pilkwang, marwanmath, "
+    "dreaddevelopment, sofiaanjenje, jiweiliu, ryokucha 등"
+)
 
 ATTRIBUTION = """# 공개 파이프라인 + 우리 모델 순위 혼합
 
 이 노트북의 앞부분(마지막 두 셀 전까지)은 공개 노트북 `{public_id}`의 코드를 **수정 없이** 쓴다.
-그 코드와 가중치의 저작자: mattiaangeli, antoinegg1, prvsiyan, pilkwang, marwanmath,
-dreaddevelopment, sofiaanjenje, jiweiliu, ryokucha 등 (각 데이터셋·노트북 참조).
+그 코드와 가중치의 저작자: {credits} (각 데이터셋·노트북 참조).
 
 마지막 두 셀만 우리 것이다:
 우리 모델 앙상블(`{user}/{code}`, `{user}/{weights}`)을 별도 프로세스로 돌려
 라벨별 순위로 {w:.0%} 섞는다.
+노트북 시작 후 8.3시간이 넘거나 우리 단계가 실패하면 공개 결과를 그대로 제출한다.
 """
 
 RUN_OURS = """# --- 우리 앙상블 (별도 프로세스) -------------------------------------------------
@@ -121,7 +128,15 @@ def _cell(kind: str, source: str, cid: str) -> dict:
     return cell
 
 
-def build(public_dir: Path, user: str, weight: float, out: Path) -> Path:
+def build(
+    public_dir: Path,
+    user: str,
+    weight: float,
+    out: Path,
+    kernel_slug: str = KERNEL_SLUG,
+    weights_slug: str = WEIGHTS_SLUG,
+    credits: str = DEFAULT_CREDITS,
+) -> Path:
     public_dir = Path(public_dir)
     meta = json.loads((public_dir / "kernel-metadata.json").read_text(encoding="utf-8"))
     nb = json.loads((public_dir / meta["code_file"]).read_text(encoding="utf-8"))
@@ -129,7 +144,12 @@ def build(public_dir: Path, user: str, weight: float, out: Path) -> Path:
         if c["cell_type"] == "code":
             c["outputs"], c["execution_count"] = [], None
     head = ATTRIBUTION.format(
-        public_id=meta["id"], user=user, code=CODE_SLUG, weights=WEIGHTS_SLUG, w=weight
+        public_id=meta["id"],
+        user=user,
+        code=CODE_SLUG,
+        weights=weights_slug,
+        w=weight,
+        credits=credits,
     )
     nb["cells"] = [
         _cell("markdown", head, "ours-attribution"),
@@ -140,13 +160,13 @@ def build(public_dir: Path, user: str, weight: float, out: Path) -> Path:
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    (out / f"{KERNEL_SLUG}.ipynb").write_text(
+    (out / f"{kernel_slug}.ipynb").write_text(
         json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8"
     )
     new_meta = {
-        "id": f"{user}/{KERNEL_SLUG}",
-        "title": KERNEL_SLUG,
-        "code_file": f"{KERNEL_SLUG}.ipynb",
+        "id": f"{user}/{kernel_slug}",
+        "title": kernel_slug,
+        "code_file": f"{kernel_slug}.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": True,
@@ -155,7 +175,7 @@ def build(public_dir: Path, user: str, weight: float, out: Path) -> Path:
         "dataset_sources": [
             *meta.get("dataset_sources", []),
             f"{user}/{CODE_SLUG}",
-            f"{user}/{WEIGHTS_SLUG}",
+            f"{user}/{weights_slug}",
         ],
         "competition_sources": meta.get("competition_sources", []),
         "kernel_sources": meta.get("kernel_sources", []),
@@ -174,8 +194,11 @@ def main() -> None:
     p.add_argument("--user", required=True)
     p.add_argument("--weight", type=float, default=0.1, help="우리 앙상블 순위의 비율")
     p.add_argument("--out", type=Path, default=Path("outputs/kaggle_public_blend"))
+    p.add_argument("--kernel-slug", default=KERNEL_SLUG, help="만들 Kaggle 노트북 이름")
+    p.add_argument("--weights-slug", default=WEIGHTS_SLUG, help="우리 가중치 데이터셋 이름")
+    p.add_argument("--credits", default=DEFAULT_CREDITS, help="공개 노트북 코드·가중치 저작자")
     a = p.parse_args()
-    print(build(a.public, a.user, a.weight, a.out))
+    print(build(a.public, a.user, a.weight, a.out, a.kernel_slug, a.weights_slug, a.credits))
 
 
 if __name__ == "__main__":
