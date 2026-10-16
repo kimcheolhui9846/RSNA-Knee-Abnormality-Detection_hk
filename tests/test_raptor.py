@@ -67,3 +67,23 @@ def test_run_raptor_end_to_end(tmp_path: Path) -> None:
     assert result["swa_epochs"] == 2
     assert "pseudo_holdout_auc" in result
     assert (tmp_path / "out" / "oof.csv").is_file()
+
+
+def test_load_public_raptor_renames_keys(tmp_path: Path) -> None:
+    from src.train_raptor import load_public_raptor
+
+    cfg = {"name": "raptor", "backbone": "resnet18", "pretrained": False, "dropout": 0.2}
+    src = build_model(cfg)
+    torch.nn.init.normal_(src.cls_w)
+    public = {  # 공개 Raptor 저장 형식: backbone. / clsW / clsb
+        k.replace("encoder.", "backbone.", 1).replace("cls_w", "clsW").replace("cls_b", "clsb"): v
+        for k, v in src.state_dict().items()
+    }
+    torch.save({"model": public, "arch": "resnet18", "res": 32}, tmp_path / "p.pt")
+    dst = build_model(cfg)
+    load_public_raptor(dst, tmp_path / "p.pt")
+    for k, v in src.state_dict().items():
+        assert torch.equal(dst.state_dict()[k], v), k
+    torch.save({"model": {**public, "extra.w": torch.zeros(1)}}, tmp_path / "bad.pt")
+    with pytest.raises(RuntimeError):  # 남는 키가 있으면 실패한다
+        load_public_raptor(build_model(cfg), tmp_path / "bad.pt")

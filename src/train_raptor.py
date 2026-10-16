@@ -81,6 +81,26 @@ def _predict(model, loader, device: str, amp: bool) -> np.ndarray:
     return np.concatenate(out) if out else np.zeros((0, len(LABELS)), np.float32)
 
 
+def load_public_raptor(model: torch.nn.Module, path: Path) -> None:
+    """공개 Raptor 체크포인트(`{"model": state_dict}`, nartaa 등)를 우리 `KneeRaptor`에 불러온다.
+
+    구조는 같고 이름만 다르다: `backbone.` → `encoder.`, `clsW`/`clsb` → `cls_w`/`cls_b`.
+    빠지거나 남는 키가 있으면 실패한다 (strict).
+    """
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    state = {
+        k.replace("backbone.", "encoder.", 1).replace("clsW", "cls_w").replace("clsb", "cls_b"): v
+        for k, v in ck["model"].items()
+    }
+    model.load_state_dict(state, strict=True)
+    log.info(
+        "init from %s (%d tensors, meta %s)",
+        path.name,
+        len(state),
+        {k: ck[k] for k in ("arch", "res", "epoch", "gold_auc") if k in ck},
+    )
+
+
 def run_raptor(
     config: dict,
     data_dir: Path,
@@ -130,7 +150,10 @@ def run_raptor(
             drop_last=train and len(t) >= bs,
         )
 
-    model = build_model(config["model"]).to(device)
+    model = build_model(config["model"])
+    if config.get("init_checkpoint"):
+        load_public_raptor(model, data_dir / config["init_checkpoint"])
+    model = model.to(device)
     enc = [p for n, p in model.named_parameters() if n.startswith("encoder.") and p.requires_grad]
     head = [
         p for n, p in model.named_parameters() if not n.startswith("encoder.") and p.requires_grad

@@ -110,6 +110,8 @@ def fetch_data(config: dict, data_dir: Path, beat=heartbeat) -> None:
         config.get("labels_file", "labels.csv"),
         "folds.csv",
     ]
+    if config.get("init_checkpoint"):  # exp013~: 공개 체크포인트에서 이어 학습
+        patterns.append(config["init_checkpoint"])
     with ThreadPoolExecutor(1) as pool:
         job = pool.submit(
             snapshot_download,
@@ -214,6 +216,21 @@ def train_model(cfg: Config) -> Path:
                 "pretrained": False,
                 "grad_ckpt": False,
             }
+            if config.get("init_checkpoint"):  # 시작 가중치 불러오기 경로도 스모크에서 거친다
+                import torch
+
+                from src.models import build_model
+
+                init = data_dir / config["init_checkpoint"]
+                init.parent.mkdir(parents=True, exist_ok=True)
+                state = build_model(config["model"]).state_dict()
+                public = {
+                    k.replace("encoder.", "backbone.", 1)
+                    .replace("cls_w", "clsW")
+                    .replace("cls_b", "clsb"): v
+                    for k, v in state.items()
+                }
+                torch.save({"model": public}, init)
         elif config.get("data_repo"):
             fetch_data(config, data_dir)
         result = run_raptor(
