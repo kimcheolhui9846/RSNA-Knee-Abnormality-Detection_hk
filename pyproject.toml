@@ -28,6 +28,14 @@ dev = [
     "pytest",
     "ruff",
 ]
+# EDA 노트북 실행용: uv sync --group eda
+eda = [
+    "ipykernel",
+    "langdetect",
+    "matplotlib",
+    "nbclient",
+    "nbformat",
+]
 
 [tool.uv]
 package = false
