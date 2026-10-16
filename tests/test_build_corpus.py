@@ -87,3 +87,13 @@ class _SerialPool:
 
     def imap_unordered(self, fn, jobs):
         return map(fn, jobs)
+
+
+def test_slots96_matches_public_nartaa_layout() -> None:
+    from src.data.build_corpus import SLOT_SETS
+    from src.data.raptor_stack import SLOTS96
+
+    # 공개 nartaa Raptor(0.949) 추론 코드의 SLOTS와 같다
+    # (시상 fluid 26, 시상 22, 관상 fluid 18, 관상 12, 축상 18)
+    assert [k for _, _, k in SLOTS96] == [26, 22, 18, 12, 18] and sum(k for *_, k in SLOTS96) == 96
+    assert SLOT_SETS["SLOTS96"] is SLOTS96
