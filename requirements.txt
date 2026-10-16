@@ -7,3 +7,5 @@ pandas
 scikit-learn
 pyyaml
 timm
+pydicom==3.0.2
+opencv-python-headless
