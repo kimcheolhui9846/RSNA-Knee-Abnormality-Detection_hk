@@ -1,0 +1,62 @@
+# HANDOFF — Kaggle 제출 경로 (추론 + 제출 꾸러미)
+
+작성: kim cheol hui | 날짜: 2026-10-03 | 브랜치: `feat/kaggle-submit` (base: `exp/001-baseline`, stacked PR)
+
+## 1. 요약 (TL;DR)
+- `src/infer.py` `predict()`: test DICOM → 학습과 같은 전처리 → fold 앙상블(평균) → 검증된 `submission.csv`.
+  읽을 수 있는 시리즈가 없는 study는 `FALLBACK_PROB=0.5`로 채워 제출 파일이 항상 완성된다.
+- `kaggle/submission.py`: 인터넷 OFF 제출 스크립트. 입력 경로를 표시 파일로 찾아서 Kaggle 마운트 경로 변화에 강하다.
+- `kaggle/build_kaggle.py`: 업로드용 폴더 3개(코드 데이터셋, 가중치 데이터셋, 제출 노트북 메타데이터)를 만든다. 업로드는 하지 않는다.
+- 로컬 검증: 공개 test 3 study로 `/kaggle/input` 흉내 폴더에서 끝까지 실행 성공, 오프라인 휠 설치 성공.
+
+## 2. 한 일과 결정 기록
+| 항목 | 결정 | 이유 |
+|------|------|------|
+| 추론 입력 | 캐시 없이 study마다 DICOM을 바로 읽음 | test는 제출 때 교체된다. 학습과 같은 `load_series`/`preprocess_series`/`select_series`/`resample_depth` |
+| 사전학습 가중치 | 받지 않음 (`pretrained=False` 후 학습 가중치 로드) | 인터넷 OFF. 학습 가중치에 백본까지 다 들어 있다 |
+| fold 수 | 가중치 파일의 `fold{k}.` 접두사에서 읽음 | 실험마다 fold 수가 달라도 코드 수정 없음 |
+| 실패한 study | 0.5로 채우고 로그 | 제출 실패(행 누락)를 막는다. 시리즈 하나 실패는 나머지 시리즈로 예측 |
+| 병렬 | DataLoader worker가 DICOM 디코딩, batch 1 | 병목은 I/O·디코딩이다 |
+| 오프라인 휠 | timm 1.0.30(학습과 같은 버전) + pylibjpeg 3종(cp310/311/312) | Kaggle 이미지의 Python 버전을 몰라 세 버전 모두. 설치 실패 시 기본 패키지로 진행 |
+| 경로 찾기 | `rsna_knee_*.marker`, `test_series.csv`를 `/kaggle/input` 아래에서 검색 | 데이터셋 마운트 경로 규칙이 바뀌어도 동작 |
+| 노트북 형식 | script kernel, GPU ON, 인터넷 OFF, 비공개 | lint·테스트 가능한 .py |
+
+## 3. 결과
+- 테스트 56 passed (infer 3, build 1 추가), `ruff check`·`ruff format --check` 통과 (WSL, GPU 숨김)
+- 실제 exp001 가중치(94.4 MB, 5 fold)로 공개 test 3 study 예측: 형식 검증 통과, fallback 0
+- Kaggle 흉내 실행(`/kaggle/input` 구조, 저장소 밖 작업 폴더): 성공, 24초 (CPU, HDD 경유)
+- 깨끗한 Python 3.11 + pip에서 `pip install --no-index` 오프라인 휠 설치·import 성공
+- 꾸러미 크기: 코드 18.9 MB (휠 포함), 가중치 94.4 MB
+
+### Kaggle 실제 제출 (2026-10-03~04, API, 사용자 `kimche12`)
+- 데이터셋(비공개): `kimche12/rsna-knee-code`(v2, 휠 py3.10–3.14), `kimche12/rsna-knee-weights`(exp002 가중치, sha `35ec4197…`)
+- 노트북 `kimche12/rsna-knee-submit` (비공개, GPU, 인터넷 OFF)
+  - v1: 추론 성공(fallback 0)이었지만 오프라인 휠 설치 실패 — Kaggle Python이 **3.13**이라 cp310–312 휠이 맞지 않았고,
+    한 줄 설치라 timm까지 같이 실패 → 패키지별 설치 + cp313/cp314 휠 추가 + Python·디코더 로그로 수정
+  - v2: Python 3.13.15, 휠 4종 설치 rc=0, 압축 DICOM 디코더 사용 가능, GPU 추론 3 study 50초, fallback 0
+- 실제 Kaggle 마운트 경로: `/kaggle/input/datasets/<user>/<slug>`, `/kaggle/input/competitions/<slug>` — 표시 파일 탐색이 유효했다
+- **전체 17.6분 중 대부분이 입력 경로 탐색**으로 추정: `/kaggle/input/**` 재귀 glob이 대회 train DICOM 수십만 파일까지 훑는다 →
+  Efficiency 트랙을 위해 탐색 깊이를 제한해야 한다 (다음 작업)
+- 대회 제출: v2 → submission ref `56800890` (메시지 "exp002 … CV 0.778"), 점수는 `experiments/exp002.md`에 기록
+
+- **실행 시간 단축 (v3)**: `find_one`을 너비 우선·최대 깊이 4로 바꾸고 `train_series`/`test_series`는 열지 않는다
+  (테스트 4개: 현재·예전 마운트 경로, DICOM 트리 미진입, 깊이 제한). 공개 test 기준 전체 **17.6분 → 0.9분**, 경로 탐색 0.0초
+- 대회 제출 2: v3 → submission ref `56801888` (가중치는 `56800890`과 같음, 실행 시간만 다름)
+
+## 4. 미해결 문제
+- **Kaggle 실측 필요**: test 약 1,300 study 기준 시간. 로컬 CPU는 study당 약 8초(5 fold, HDD). Kaggle GPU에서는 디코딩이 병목일 것 → 첫 제출 로그로 확인
+- **Kaggle 인증 없음**: 이 PC에 `kaggle.json`이 없다. 업로드(`kaggle datasets create`, `kaggle kernels push`)와 제출에 필요
+- **압축 DICOM**: train 표본에는 없었다. test에 있으면 오프라인 디코더가 필요 → 휠 포함으로 대비
+- FALLBACK 0.5는 AUC상 중립값이지만, 실패 study가 많으면 점수를 깎는다. 로그의 fallback 수를 확인
+
+## 5. 다음 작업자가 할 일
+**웹 제출 (2026-10-03 결정: 사용자가 사이트에서 직접 제출)**
+- 빌드한 꾸러미는 작업 폴더 `kaggle_upload/`(git 무시)에 있다: `code.zip`, `weights.zip`,
+  `kernel/rsna-knee-submit.ipynb`, 단계별 안내 `README_제출방법.md`, 확인용 `local_check/` csv.
+- 실제 업로드 파일(zip 해제 + ipynb 코드 셀)로 Kaggle 흉내 실행: 마운트 경로를 바꿔도 성공, 로컬 결과와 차이 0.0
+- 순서: 데이터셋 2개(Private) 생성 → 대회 Code에서 ipynb Import → Input 3개 연결, GPU ON, Internet OFF
+  → Run All로 시험 → Save & Run All → Submit
+- 노트북 실행 로그의 시간·fallback 수를 기록하고, LB 점수를 `experiments/exp001.md`·README에 반영
+
+**API 제출 (선택, Kaggle 인증이 있을 때)**
+- `python kaggle/build_kaggle.py --user <사용자명> ...` → `kaggle datasets create -p ...` → `kaggle kernels push -p ...`
