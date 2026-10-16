@@ -290,3 +290,64 @@ def test_members_with_different_inputs_run_in_one_pass(tmp_path: Path) -> None:
     s = predict(data, tmp_path / "s.safetensors", SLOT_CONFIG, tmp_path / "s.csv", **kw)
     expected = rank_average([a[list(LABELS)].to_numpy(), s[list(LABELS)].to_numpy()], [1, 1])
     np.testing.assert_allclose(sub[list(LABELS)].to_numpy(), expected, rtol=1e-5)
+
+
+RAPTOR = {"name": "raptor", "backbone": "resnet18", "pretrained": False, "dropout": 0.0}
+RAPTOR_CONFIG = {
+    "model": RAPTOR,
+    "input": "raptor_stack",
+    "slots": "SLOTS44",
+    "span": [0.06, 0.94],
+    "img": 32,
+    "crop_mm": 1000.0,
+    "res": 32,
+    "k_eval": 4,
+}
+
+
+def _raptor_member(path: Path) -> None:
+    from src.models import build_model
+
+    torch.manual_seed(3)
+    model = build_model(RAPTOR)
+    state = {f"fold0.{n}": t.contiguous() for n, t in model.state_dict().items()}
+    save_file(state, str(path))
+
+
+def test_raptor_member_builds_stack_from_dicom(tmp_path: Path) -> None:
+    # exp007: DICOM → 44장 스택 → 창 4개. 시리즈가 있는 study는 fallback이 아니다
+    _test_dataset(tmp_path / "data")
+    _raptor_member(tmp_path / "r.safetensors")
+    sub = predict(
+        tmp_path / "data",
+        tmp_path / "r.safetensors",
+        RAPTOR_CONFIG,
+        tmp_path / "r.csv",
+        device="cpu",
+        num_workers=0,
+    ).set_index(ID_COL)
+    assert not np.allclose(sub.loc["t1"].to_numpy(dtype=float), FALLBACK_PROB)
+    assert np.allclose(sub.loc["t3"].to_numpy(dtype=float), FALLBACK_PROB)
+
+
+def test_slice_slot_and_raptor_members_together(tmp_path: Path) -> None:
+    from src.infer import Member, predict_members, rank_average
+
+    _test_dataset(tmp_path / "data")
+    _member_dir(tmp_path / "a", 0, CONFIG)
+    _slot_member(tmp_path / "s.safetensors")
+    _raptor_member(tmp_path / "r.safetensors")
+    kw = {"device": "cpu", "num_workers": 0}
+    data = tmp_path / "data"
+    members = [
+        Member("a", tmp_path / "a" / "model.safetensors", CONFIG),
+        Member("s", tmp_path / "s.safetensors", SLOT_CONFIG),
+        Member("r", tmp_path / "r.safetensors", RAPTOR_CONFIG, 2.0),
+    ]
+    sub = predict_members(data, members, tmp_path / "e.csv", **kw)
+    single = [
+        predict(data, m.weights_path, m.config, tmp_path / f"{m.name}.csv", **kw)[list(LABELS)]
+        for m in members
+    ]
+    expected = rank_average([x.to_numpy() for x in single], [1, 1, 2])
+    np.testing.assert_allclose(sub[list(LABELS)].to_numpy(), expected, rtol=1e-5)
