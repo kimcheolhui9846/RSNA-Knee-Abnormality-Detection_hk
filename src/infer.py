@@ -21,10 +21,11 @@ from safetensors.torch import load_file
 from torch.utils.data import DataLoader, Dataset
 
 from src.constants import ID_COL, LABELS
+from src.data.dataset import slab_stack
 from src.data.dicom import load_series
 from src.data.preprocess import preprocess_series
 from src.data.study_table import SLOTS, resample_depth, select_series
-from src.models.baseline import KneeBaseline
+from src.models import build_model
 from src.paths import data_dir
 from src.submission import validate_submission
 
@@ -38,13 +39,28 @@ def load_ensemble(weights_path: Path, model_cfg: dict, device: str) -> list[torc
     folds = sorted({k.split(".", 1)[0] for k in state}, key=lambda f: int(f.removeprefix("fold")))
     models = []
     for fold in folds:
-        model = KneeBaseline(**{**model_cfg, "pretrained": False})
+        model = build_model({**model_cfg, "pretrained": False})
         prefix = f"{fold}."
         model.load_state_dict(
             {k[len(prefix) :]: v for k, v in state.items() if k.startswith(prefix)}
         )
         models.append(model.to(device).eval())
     return models
+
+
+def _fat_suppression(row) -> int | None:
+    """칸 구분용 `Fat_Suppression` (0/1).
+
+    비어 있으면 train에서 항상 같은 값인 `Fluid_Sensitive`로 대신하고,
+    둘 다 없거나 숫자가 아니면 None (그 시리즈는 건너뛴다)."""
+    for name in ("Fat_Suppression", "Fluid_Sensitive"):
+        try:
+            value = float(getattr(row, name))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not np.isnan(value):
+            return int(value)
+    return None
 
 
 class TestStudyDataset(Dataset):
@@ -61,22 +77,31 @@ class TestStudyDataset(Dataset):
 
     def __getitem__(self, i: int) -> dict:
         sid = self.study_ids[i]
-        depth, size = self.cfg["depth"], self.cfg["size"]
-        image = np.zeros((len(SLOTS), depth, size, size), dtype=np.float32)
+        depth, size, slab = self.cfg["depth"], self.cfg["size"], self.cfg.get("slab", 1)
+        shape = (len(SLOTS), depth, size, size)
+        if slab > 1:  # 2.5D: 학습과 같은 slab_stack
+            shape = (len(SLOTS), depth, slab, size, size)
+        image = np.zeros(shape, dtype=np.float32)
         slot_mask = np.zeros(len(SLOTS), dtype=bool)
 
         volumes, rows = {}, []
         for row in self.by_study.get(sid, pd.DataFrame()).itertuples():
             key = str(row.SeriesInstanceUID)
+            fat_sup = _fat_suppression(row)
+            if (
+                fat_sup is None
+            ):  # 칸을 정할 수 없으면 읽지 않고 건너뛴다 (예외로 추론 전체가 멈추지 않게)
+                log.warning(
+                    "series 메타데이터 결측 %s/%s: Fat_Suppression·Fluid_Sensitive", sid, key
+                )
+                continue
             try:
                 vol = preprocess_series(load_series(self.series_root / sid / key), size=size)
             except Exception as e:  # noqa: BLE001 — 시리즈 하나가 망가져도 나머지로 예측한다
                 log.warning("series 읽기 실패 %s/%s: %r", sid, key, e)
                 continue
             volumes[key] = vol
-            rows.append(
-                (sid, key, row.Anatomical_Plane, int(row.Fat_Suppression), len(vol), "built", key)
-            )
+            rows.append((sid, key, row.Anatomical_Plane, fat_sup, len(vol), "built", key))
 
         if rows:
             index = pd.DataFrame(
@@ -94,7 +119,11 @@ class TestStudyDataset(Dataset):
             chosen = select_series(index, self.cfg["target_slices"]).loc[sid]
             for k, key in enumerate(chosen):
                 if key is not None:
-                    image[k] = resample_depth(volumes[key], depth).astype(np.float32) / 255.0
+                    vol = volumes[key]
+                    stacked = (
+                        slab_stack(vol, depth, slab) if slab > 1 else resample_depth(vol, depth)
+                    )
+                    image[k] = stacked.astype(np.float32) / 255.0
                     slot_mask[k] = True
         return {
             "study_id": sid,

@@ -99,3 +99,63 @@ def test_fold_count_is_read_from_weights(tmp_path: Path) -> None:
             num_workers=0,
         )
         assert len(sub) == 3
+
+
+def test_predict_with_dino_attn_and_slab(tmp_path: Path) -> None:
+    # exp004 모델(DINOv2 계열 + 라벨별 attention, 2.5D 입력)도 같은 경로로 추론한다
+    from src.models import build_model
+
+    dino = {
+        "name": "dino_attn",
+        "backbone": "vit_tiny_patch16_224",
+        "pretrained": False,
+        "img_size": 32,
+        "freeze_blocks": 0,
+        "n_heads": 2,
+        "dropout": 0.0,
+    }
+    _test_dataset(tmp_path / "data")
+    torch.manual_seed(0)
+    state = {}
+    for k in range(2):
+        state.update(
+            {f"fold{k}.{n}": t.contiguous() for n, t in build_model(dino).state_dict().items()}
+        )
+    save_file(state, str(tmp_path / "w.safetensors"))
+    config = {"model": dino, "depth": 4, "size": 32, "target_slices": 4, "slab": 3}
+
+    sub = predict(
+        tmp_path / "data",
+        tmp_path / "w.safetensors",
+        config,
+        tmp_path / "s.csv",
+        device="cpu",
+        num_workers=0,
+    )
+    assert len(sub) == 3
+    assert sub[list(LABELS)].apply(lambda c: c.between(0, 1)).all().all()
+
+
+def test_missing_fat_suppression_falls_back_to_fluid_sensitive_or_skips(tmp_path: Path) -> None:
+    # 숨은 test에 메타데이터 결측이 있어도 추론 전체가 멈추면 안 된다
+    _test_dataset(tmp_path / "data")
+    _weights(tmp_path / "w.safetensors")
+    kwargs = {"device": "cpu", "num_workers": 0}
+    clean = predict(
+        tmp_path / "data", tmp_path / "w.safetensors", CONFIG, tmp_path / "a.csv", **kwargs
+    ).set_index(ID_COL)
+
+    series = pd.read_csv(tmp_path / "data" / "test_series.csv", dtype=str)
+    series.loc[series["SeriesInstanceUID"] == "a", "Fat_Suppression"] = (
+        None  # Fluid_Sensitive로 대신
+    )
+    series.loc[series["SeriesInstanceUID"] == "c", ["Fat_Suppression", "Fluid_Sensitive"]] = None
+    series.to_csv(tmp_path / "data" / "test_series.csv", index=False)
+    sub = predict(
+        tmp_path / "data", tmp_path / "w.safetensors", CONFIG, tmp_path / "b.csv", **kwargs
+    ).set_index(ID_COL)
+
+    np.testing.assert_allclose(sub.loc["t1"], clean.loc["t1"], rtol=1e-5)
+    assert np.allclose(
+        sub.loc["t2"].to_numpy(dtype=float), FALLBACK_PROB
+    )  # 칸을 못 정한 유일한 시리즈
