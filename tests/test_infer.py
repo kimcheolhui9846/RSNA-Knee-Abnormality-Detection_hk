@@ -159,3 +159,82 @@ def test_missing_fat_suppression_falls_back_to_fluid_sensitive_or_skips(tmp_path
     assert np.allclose(
         sub.loc["t2"].to_numpy(dtype=float), FALLBACK_PROB
     )  # 칸을 못 정한 유일한 시리즈
+
+
+# --- 여러 모델 앙상블 (순위 평균) ------------------------------------------------
+
+
+def test_rank_average_uses_ranks_not_raw_probabilities() -> None:
+    from src.infer import rank_average
+
+    a = np.array([[0.1], [0.2], [0.3]])  # 순위 1, 2, 3
+    b = np.array([[0.99], [0.98], [0.97]])  # 순위 3, 2, 1 — 값 크기는 무시된다
+    out = rank_average([a, b], [1.0, 1.0])
+    np.testing.assert_allclose(out[:, 0], [2 / 3, 2 / 3, 2 / 3])
+    np.testing.assert_allclose(rank_average([a, b], [3.0, 1.0])[:, 0], [0.5, 2 / 3, 5 / 6])
+
+
+def _member_dir(root: Path, seed: int, config: dict) -> None:
+    root.mkdir(parents=True)
+    torch.manual_seed(seed)
+    state = {}
+    for k in range(2):
+        model = KneeBaseline(**TINY)
+        state.update({f"fold{k}.{n}": t.contiguous() for n, t in model.state_dict().items()})
+    save_file(state, str(root / "model.safetensors"))
+    import yaml
+
+    (root / "config.yaml").write_text(yaml.safe_dump(config))
+
+
+def test_load_members_reads_single_model_or_ensemble_spec(tmp_path: Path) -> None:
+    from src.infer import load_members
+
+    _member_dir(tmp_path / "single", 0, CONFIG)
+    single = load_members(tmp_path / "single")
+    assert [(m.name, m.weight) for m in single] == [("model", 1.0)]
+
+    ens = tmp_path / "ens"
+    _member_dir(ens / "a", 0, CONFIG)
+    _member_dir(ens / "b", 1, CONFIG)
+    (ens / "ensemble.yaml").write_text(
+        "members:\n- {dir: a, weight: 0.7}\n- {dir: b, weight: 0.3}\n"
+    )
+    members = load_members(ens)
+    assert [(m.name, m.weight) for m in members] == [("a", 0.7), ("b", 0.3)]
+    assert members[1].weights_path == ens / "b" / "model.safetensors"
+
+
+def test_ensemble_submission_is_rank_average_of_members(tmp_path: Path) -> None:
+    from src.infer import load_members, predict_members, rank_average
+
+    _test_dataset(tmp_path / "data")
+    ens = tmp_path / "ens"
+    _member_dir(ens / "a", 0, CONFIG)
+    _member_dir(ens / "b", 1, CONFIG)
+    (ens / "ensemble.yaml").write_text(
+        "members:\n- {dir: a, weight: 0.7}\n- {dir: b, weight: 0.3}\n"
+    )
+    kw = {"device": "cpu", "num_workers": 0}
+    data = tmp_path / "data"
+
+    sub = predict_members(data, load_members(ens), tmp_path / "e.csv", **kw)
+    a = predict(data, ens / "a" / "model.safetensors", CONFIG, tmp_path / "a.csv", **kw)
+    b = predict(data, ens / "b" / "model.safetensors", CONFIG, tmp_path / "b.csv", **kw)
+
+    expected = rank_average([a[list(LABELS)].to_numpy(), b[list(LABELS)].to_numpy()], [0.7, 0.3])
+    np.testing.assert_allclose(sub[list(LABELS)].to_numpy(), expected, rtol=1e-5)
+    assert sub[ID_COL].tolist() == ["t1", "t2", "t3"]
+
+
+def test_members_with_different_input_settings_are_rejected(tmp_path: Path) -> None:
+    from src.infer import Member, predict_members
+
+    _test_dataset(tmp_path / "data")
+    _member_dir(tmp_path / "a", 0, CONFIG)
+    members = [
+        Member("a", tmp_path / "a" / "model.safetensors", CONFIG),
+        Member("b", tmp_path / "a" / "model.safetensors", {**CONFIG, "depth": 8}),
+    ]
+    with pytest.raises(ValueError, match="입력 설정"):
+        predict_members(tmp_path / "data", members, tmp_path / "x.csv", device="cpu", num_workers=0)

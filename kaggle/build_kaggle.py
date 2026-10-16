@@ -9,6 +9,8 @@
 
 실행: `python kaggle/build_kaggle.py --user <kaggle 사용자명> --weights <model.safetensors>
        --config configs/exp001_baseline.yaml [--wheels <휠 폴더>]`
+앙상블: `--weights` 대신 `--member <이름>=<model.safetensors>,<config.yaml>[,<가중치>]`를 여러 번
+       → weights/<이름>/ 폴더들과 `ensemble.yaml` (추론은 라벨별 순위 가중 평균)
 업로드(사용자 승인 후): `kaggle datasets create -p outputs/kaggle/code` (갱신은 `datasets version`),
 `kaggle kernels push -p outputs/kaggle/kernel`
 """
@@ -17,6 +19,8 @@ import argparse
 import json
 import shutil
 from pathlib import Path
+
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 COMPETITION = "rsna-knee-abnormality-detection"
@@ -28,7 +32,12 @@ def _dataset_meta(user: str, slug: str) -> dict:
 
 
 def build(
-    user: str, weights: Path, config: Path, out: Path, wheels: Path | None = None
+    user: str,
+    weights: Path | None,
+    config: Path | None,
+    out: Path,
+    wheels: Path | None = None,
+    members: list[tuple[str, Path, Path, float]] | None = None,
 ) -> dict[str, Path]:
     if out.exists():
         shutil.rmtree(out)
@@ -47,9 +56,22 @@ def build(
     )
 
     wdir.mkdir(parents=True)
-    shutil.copy2(weights, wdir / "model.safetensors")
-    shutil.copy2(config, wdir / "config.yaml")
-    (wdir / "rsna_knee_weights.marker").write_text(f"weights from {weights}\n", encoding="utf-8")
+    if members:
+        spec = []
+        for name, m_weights, m_config, weight in members:
+            (wdir / name).mkdir()
+            shutil.copy2(m_weights, wdir / name / "model.safetensors")
+            shutil.copy2(m_config, wdir / name / "config.yaml")
+            spec.append({"dir": name, "weight": weight})
+        (wdir / "ensemble.yaml").write_text(
+            yaml.safe_dump({"members": spec}, sort_keys=False), encoding="utf-8"
+        )
+        source = ", ".join(f"{n}={w}" for n, w, _, _ in members)
+    else:
+        shutil.copy2(weights, wdir / "model.safetensors")
+        shutil.copy2(config, wdir / "config.yaml")
+        source = str(weights)
+    (wdir / "rsna_knee_weights.marker").write_text(f"weights from {source}\n", encoding="utf-8")
     (wdir / "dataset-metadata.json").write_text(
         json.dumps(_dataset_meta(user, WEIGHTS_SLUG), indent=2)
     )
@@ -108,15 +130,33 @@ def _write_notebook(script: Path, out: Path) -> None:
     out.write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def parse_member(text: str) -> tuple[str, Path, Path, float]:
+    """`exp002=w/model.safetensors,w/config.yaml,0.5` → (이름, 가중치, config, 가중치 비율)."""
+    name, rest = text.split("=", 1)
+    parts = rest.split(",")
+    weight = float(parts[2]) if len(parts) > 2 else 1.0
+    return name, Path(parts[0]), Path(parts[1]), weight
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--user", required=True, help="Kaggle 사용자명")
-    p.add_argument("--weights", type=Path, required=True)
+    p.add_argument("--weights", type=Path, default=None)
+    p.add_argument(
+        "--member",
+        action="append",
+        default=[],
+        help="앙상블 멤버 <이름>=<model.safetensors>,<config.yaml>[,<가중치>] (여러 번)",
+    )
     p.add_argument("--config", type=Path, default=REPO / "configs" / "exp001_baseline.yaml")
     p.add_argument("--wheels", type=Path, default=None)
     p.add_argument("--out", type=Path, default=REPO / "outputs" / "kaggle")
     args = p.parse_args()
-    for name, path in build(args.user, args.weights, args.config, args.out, args.wheels).items():
+    members = [parse_member(m) for m in args.member]
+    if bool(members) == bool(args.weights):
+        p.error("--weights와 --member 중 하나만 쓴다")
+    built = build(args.user, args.weights, args.config, args.out, args.wheels, members or None)
+    for name, path in built.items():
         size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
         print(f"{name:8s} {path}  ({size / 1e6:.1f} MB)")
 
