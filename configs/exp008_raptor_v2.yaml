@@ -1,0 +1,36 @@
+# exp008-v2 — exp007(Raptor CoAtNet)과 같은 절차, 라벨과 seed만 바꾼 앙상블 다양성 변형.
+# 라벨: labels_v2.csv (dread = 공개 Raptor 라벨, v2 = 공개 라벨 5종 평균, mean = 둘의 평균; 정답 58은 그대로), seed 7.
+trainer: raptor
+seed: 7
+
+model:
+  name: raptor
+  backbone: coatnet_rmlp_2_rw_384.sw_in12k_ft_in1k
+  pretrained: true
+  dropout: 0.2
+  grad_ckpt: true            # bs 8 × 12창 × 384px를 24 GB에 넣는다 (공개 측정 23.7 GB)
+
+corpus_dir: raptor_corpus
+
+# Kaggle 추론(DICOM → 같은 스택)용. 학습은 코퍼스를 그대로 읽는다
+input: raptor_stack
+slots: SLOTS44
+span: [0.15, 0.85]
+img: 336
+crop_mm: 140.0
+labels_file: labels_v2.csv
+holdout_fold: null           # 학습 데이터를 줄이지 않는다 (공개: 코퍼스 확대가 +0.013)
+
+res: 384
+k: 12                        # 학습: study마다 무작위 창 12개
+k_eval: 24                   # 평가: 고르게 24개
+epochs: 16
+batch_size: 8
+lr: 1.0e-3                   # 헤드
+backbone_lr: 3.0e-5
+pct_start: 0.15
+weight_decay: 2.0e-2
+grad_clip: 3.0
+swa_last: 3                  # 마지막 3 epoch 가중치 평균 (정답 58로 epoch를 고르지 않는다)
+amp: true
+num_workers: 8
