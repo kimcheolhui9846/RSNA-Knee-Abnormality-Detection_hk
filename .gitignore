@@ -2,6 +2,11 @@
 /data/
 /input/
 /rsna-knee-abnormality-detection/
+/cache/
+
+# 대회 데이터에서 파생된 산출물 (저장소가 공개라 UID·라벨·report를 올리지 않는다)
+/folds/*.csv
+/pseudo_labels/
 *.dcm
 *.crdownload
 *.zip
@@ -19,6 +24,7 @@ lightning_logs/
 
 # 제출물·비밀값
 submission.csv
+/kaggle_upload*/
 .env
 .env.*
 kaggle.json

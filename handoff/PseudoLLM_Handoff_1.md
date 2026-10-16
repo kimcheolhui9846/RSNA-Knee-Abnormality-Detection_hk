@@ -63,3 +63,7 @@
 2. 약한 라벨(Effusion·PF OA·Synovitis) 프롬프트 개선: 생리적 소량 삼출은 음성, 슬개대퇴 연골 변성 용어(chondromalacia 등) 명시.
    단 58개로 프롬프트를 계속 맞추면 이 58개에 과적합된다 — 고친 뒤 한 번만 재채점
 3. 재실행 시 `raw_responses.csv`가 있으면 LLM을 다시 돌리지 않고 `parse_response` 해석만 바꿀 수 있다
+
+## 6. main 병합 메모 (2026-10-16)
+- main 병합 때 `requirements.txt` 충돌은 학습용(`train.py`) 버전을 남겼다. 학습 Pod에 `vllm`이 깔리면 템플릿 이미지의 torch가 바뀌기 때문이다.
+- pseudo_job.py를 다시 돌릴 때는 병합 전 커밋 `bfff735`의 `requirements.txt`(vllm 포함)를 쓴다.
