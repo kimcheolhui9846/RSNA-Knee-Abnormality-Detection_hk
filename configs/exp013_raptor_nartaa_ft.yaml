@@ -1,0 +1,40 @@
+# exp013 — 공개 nartaa Raptor(0.949, OAI 보조 학습) 체크포인트에서 출발해 정제 라벨(exp009)로 짧게 이어 학습.
+# 목적: 공개 0.956 혼합의 Raptor 칸에 넣을 "같은 강도, 다른 오차"의 변형. 정답 58로는 강도 차이가 안 보인다
+# (nartaa 0.918 vs exp011 0.915, LB 0.949 vs ~0.92) → 판정은 LB로 한다.
+# 구조는 우리 KneeRaptor와 같고 이름만 다르다 (src.train_raptor.load_public_raptor).
+# 시작점: nartaa/rsna-knee-publication-swa-weights-20261007 의 r384_swa (sha256 7e5315da…)
+trainer: raptor
+seed: 13
+data_repo: cheolhhh9846/rsna-knee-raptor-corpus
+init_checkpoint: init/raptor_ft_alldata_t16_blendjev_oai_d96_r384_swa.pt
+
+model:
+  name: raptor
+  backbone: coatnet_rmlp_2_rw_384.sw_in12k_ft_in1k
+  pretrained: false          # 시작 가중치를 init_checkpoint에서 받는다
+  dropout: 0.2
+  grad_ckpt: true
+
+corpus_dir: raptor_corpus
+
+input: raptor_stack
+slots: SLOTS44
+span: [0.15, 0.85]
+img: 336
+crop_mm: 140.0
+labels_file: labels_refined.csv
+holdout_fold: null
+
+res: 384                     # 우리 코퍼스 384 창으로 평가해도 nartaa 가중치 정답 58 0.918 (Kaggle 측정, k=42)
+k: 12
+k_eval: 24
+epochs: 6                    # 이어 학습: 짧게, 낮은 학습률 (시작점의 OAI 학습 효과를 지우지 않게)
+batch_size: 8
+lr: 1.0e-4                   # 헤드 (이미 학습됨 → 처음 학습의 1/10)
+backbone_lr: 1.0e-5
+pct_start: 0.15
+weight_decay: 2.0e-2
+grad_clip: 3.0
+swa_last: 3
+amp: true
+num_workers: 8

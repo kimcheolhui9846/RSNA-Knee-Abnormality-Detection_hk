@@ -81,6 +81,35 @@ def _predict(model, loader, device: str, amp: bool) -> np.ndarray:
     return np.concatenate(out) if out else np.zeros((0, len(LABELS)), np.float32)
 
 
+def eval_batch_size(config: dict) -> int:
+    """평가 배치(study 수). 한 번에 백본에 들어가는 창 수가 학습 때(`batch_size × k`)를 넘지 않게.
+
+    exp014: k_eval 42 × 4 study = 168장이 CoAtNet 앞단 conv에서 텐서 32비트 인덱스 한도를 넘었다.
+    """
+    by_windows = config["batch_size"] * config["k"] // config["k_eval"]
+    return max(1, min(config["batch_size"] // 2, by_windows))
+
+
+def load_public_raptor(model: torch.nn.Module, path: Path) -> None:
+    """공개 Raptor 체크포인트(`{"model": state_dict}`, nartaa 등)를 우리 `KneeRaptor`에 불러온다.
+
+    구조는 같고 이름만 다르다: `backbone.` → `encoder.`, `clsW`/`clsb` → `cls_w`/`cls_b`.
+    빠지거나 남는 키가 있으면 실패한다 (strict).
+    """
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    state = {
+        k.replace("backbone.", "encoder.", 1).replace("clsW", "cls_w").replace("clsb", "cls_b"): v
+        for k, v in ck["model"].items()
+    }
+    model.load_state_dict(state, strict=True)
+    log.info(
+        "init from %s (%d tensors, meta %s)",
+        path.name,
+        len(state),
+        {k: ck[k] for k in ("arch", "res", "epoch", "gold_auc") if k in ck},
+    )
+
+
 def run_raptor(
     config: dict,
     data_dir: Path,
@@ -98,6 +127,10 @@ def run_raptor(
     amp = config.get("amp", True) and device == "cuda"
 
     vols, masks, rows = open_corpus(data_dir / config.get("corpus_dir", "raptor_corpus"))
+    if config.get("mirror_slots") and sum(config["mirror_slots"]) != masks.shape[1]:
+        raise ValueError(
+            f"mirror_slots 합 {sum(config['mirror_slots'])} != 코퍼스 장수 {masks.shape[1]}"
+        )
     labels = pd.read_csv(data_dir / config.get("labels_file", "labels.csv"), dtype={ID_COL: str})
     table = label_table(labels)
     table = table[table[ID_COL].isin(rows)].reset_index(drop=True)
@@ -120,8 +153,18 @@ def run_raptor(
 
     def loader(t: pd.DataFrame, train: bool) -> DataLoader:
         k = config["k"] if train else config["k_eval"]
-        ds = CorpusWindows(t, vols, masks, rows, config["res"], k, train, config["seed"])
-        bs = config["batch_size"] if train else max(1, config["batch_size"] // 2)
+        ds = CorpusWindows(
+            t,
+            vols,
+            masks,
+            rows,
+            config["res"],
+            k,
+            train,
+            config["seed"],
+            mirror_slots=config.get("mirror_slots"),
+        )
+        bs = config["batch_size"] if train else eval_batch_size(config)
         return DataLoader(
             ds,
             batch_size=bs,
@@ -130,7 +173,10 @@ def run_raptor(
             drop_last=train and len(t) >= bs,
         )
 
-    model = build_model(config["model"]).to(device)
+    model = build_model(config["model"])
+    if config.get("init_checkpoint"):
+        load_public_raptor(model, data_dir / config["init_checkpoint"])
+    model = model.to(device)
     enc = [p for n, p in model.named_parameters() if n.startswith("encoder.") and p.requires_grad]
     head = [
         p for n, p in model.named_parameters() if not n.startswith("encoder.") and p.requires_grad

@@ -1,0 +1,38 @@
+# exp014 — 공개 nartaa Raptor(LB 0.949)의 입력 설정을 OAI 없이 따라 한다: 96장 코퍼스(구간 2–98%, 원본 384 px,
+# PR #28에서 그 추론 코드와 비트 단위 일치 확인) + 3D 좌우 거울상 증강 + 정제 라벨(exp009).
+# 질문: nartaa와 우리 Raptor(약 0.92)의 차이 중 입력·증강이 얼마인가. 0.94 근처면 0.956 혼합의 새 강한 멤버가 된다.
+trainer: raptor
+seed: 14
+data_repo: cheolhhh9846/rsna-knee-raptor-corpus
+
+model:
+  name: raptor
+  backbone: coatnet_rmlp_2_rw_384.sw_in12k_ft_in1k
+  pretrained: true
+  dropout: 0.2
+  grad_ckpt: true
+
+corpus_dir: raptor_corpus96
+mirror_slots: [26, 22, 18, 12, 18]   # SLOTS96 칸별 장수 → 학습 때 절반 확률로 3D 좌우 거울상
+
+input: raptor_stack
+slots: SLOTS96
+span: [0.02, 0.98]
+img: 384
+crop_mm: 140.0
+labels_file: labels_refined.csv
+holdout_fold: null
+
+res: 384                     # 코퍼스가 이미 384 → 늘이지 않는다
+k: 12
+k_eval: 42                   # 96장에서 고르게 42개 (nartaa는 94 + 거울상)
+epochs: 16
+batch_size: 8
+lr: 1.0e-3
+backbone_lr: 3.0e-5
+pct_start: 0.15
+weight_decay: 2.0e-2
+grad_clip: 3.0
+swa_last: 3
+amp: true
+num_workers: 8

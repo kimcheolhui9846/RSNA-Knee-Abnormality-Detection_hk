@@ -67,3 +67,45 @@ def test_run_raptor_end_to_end(tmp_path: Path) -> None:
     assert result["swa_epochs"] == 2
     assert "pseudo_holdout_auc" in result
     assert (tmp_path / "out" / "oof.csv").is_file()
+
+
+def test_load_public_raptor_renames_keys(tmp_path: Path) -> None:
+    from src.train_raptor import load_public_raptor
+
+    cfg = {"name": "raptor", "backbone": "resnet18", "pretrained": False, "dropout": 0.2}
+    src = build_model(cfg)
+    torch.nn.init.normal_(src.cls_w)
+    public = {  # 공개 Raptor 저장 형식: backbone. / clsW / clsb
+        k.replace("encoder.", "backbone.", 1).replace("cls_w", "clsW").replace("cls_b", "clsb"): v
+        for k, v in src.state_dict().items()
+    }
+    torch.save({"model": public, "arch": "resnet18", "res": 32}, tmp_path / "p.pt")
+    dst = build_model(cfg)
+    load_public_raptor(dst, tmp_path / "p.pt")
+    for k, v in src.state_dict().items():
+        assert torch.equal(dst.state_dict()[k], v), k
+    torch.save({"model": {**public, "extra.w": torch.zeros(1)}}, tmp_path / "bad.pt")
+    with pytest.raises(RuntimeError):  # 남는 키가 있으면 실패한다
+        load_public_raptor(build_model(cfg), tmp_path / "bad.pt")
+
+
+def test_mirror_windows_flips_by_slot_and_is_an_involution() -> None:
+    from src.data.raptor_stack import mirror_windows
+
+    x = torch.arange(4 * 3 * 2 * 2, dtype=torch.float32).view(4, 3, 2, 2)
+    sizes = [3, 3, 2, 2]  # 시상 0–2, 시상 3–5, 관상 6–7, 축상 8–9
+    centers = [1, 4, 6, 8]
+    y = mirror_windows(x, centers, sizes)
+    assert torch.equal(y[0], x[0].flip(0)) and torch.equal(
+        y[1], x[1].flip(0)
+    )  # 시상: 채널(슬라이스) 순서
+    assert torch.equal(y[2], x[2].flip(-1)) and torch.equal(y[3], x[3].flip(-1))  # 관상·축상: 가로
+    assert torch.equal(mirror_windows(y, centers, sizes), x)  # 두 번 하면 원래대로
+
+
+def test_eval_batch_size_caps_windows_per_batch() -> None:
+    from src.train_raptor import eval_batch_size
+
+    assert eval_batch_size({"batch_size": 8, "k": 12, "k_eval": 24}) == 4  # exp011: 그대로
+    assert eval_batch_size({"batch_size": 8, "k": 12, "k_eval": 42}) == 2  # exp014: 84장 ≤ 96장
+    assert eval_batch_size({"batch_size": 2, "k": 4, "k_eval": 94}) == 1
