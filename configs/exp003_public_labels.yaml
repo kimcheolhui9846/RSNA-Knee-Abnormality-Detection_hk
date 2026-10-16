@@ -1,0 +1,25 @@
+# exp003 — exp002와 같은 모델·설정, pseudo-label만 공개 LLM 라벨 5종의 확률 평균(soft)으로 교체
+seed: 42
+n_folds: 5
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  embed_dim: 256
+  dropout: 0.2
+
+# 데이터: HF 데이터셋 cheolhhh9846/rsna-knee-cache256 (labels.csv는 exp002, labels_v2.csv는 exp003)
+cache_dir: "."
+labels_file: labels_v2.csv
+train_on: any
+
+depth: 16
+size: 256
+target_slices: 30
+
+epochs: 4
+batch_size: 2
+lr: 3.0e-4
+weight_decay: 1.0e-2
+amp: true
+num_workers: 8

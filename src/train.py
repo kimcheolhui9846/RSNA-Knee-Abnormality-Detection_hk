@@ -16,6 +16,7 @@ pseudo-label은 노이즈가 있는 학습 신호일 뿐이다.
 
 import json
 import logging
+import os
 import random
 import time
 from collections.abc import Callable
@@ -35,6 +36,26 @@ from src.metrics import macro_auc
 from src.models.baseline import KneeBaseline
 
 log = logging.getLogger("train")
+
+
+def check_device(device: str | None) -> str:
+    """학습 장치. RunPod Pod(`RUNPOD_POD_ID`)인데 CUDA를 못 쓰면 바로 실패한다.
+
+    2026-10-04 exp003: Community Pod에서 nvidia-smi는 GPU를 보였지만 torch가 CUDA를 못 잡아
+    CPU로 4시간 돌다 시간 초과로 끝났다. 원인 진단을 위해 `torch.cuda.init()`의 오류를 함께 남긴다.
+    """
+    if device is not None:
+        return device
+    if torch.cuda.is_available():
+        return "cuda"
+    if os.environ.get("RUNPOD_POD_ID"):
+        try:
+            torch.cuda.init()
+            reason = "torch.cuda.init() succeeded but is_available() is False"
+        except Exception as e:  # noqa: BLE001 — 원인 메시지를 그대로 보고한다
+            reason = repr(e)
+        raise RuntimeError(f"GPU Pod인데 CUDA를 쓸 수 없다 — 학습 중단: {reason}")
+    return "cpu"
 
 
 def seed_everything(seed: int) -> None:
@@ -69,12 +90,18 @@ def validate_folds(labels: pd.DataFrame, folds: pd.DataFrame, n_folds: int | Non
         raise ValueError(f"folds에 없는 학습 study {len(missing)}개 (예: {missing.iloc[0]})")
 
 
-def load_table(data_dir: Path, target_slices: int, n_folds: int | None = None) -> pd.DataFrame:
+def load_table(
+    data_dir: Path,
+    target_slices: int,
+    labels_file: str = "labels.csv",
+    n_folds: int | None = None,
+) -> pd.DataFrame:
     """전체 study 학습 테이블 + `source`(gt / pseudo / none).
 
-    labels.csv에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
+    `labels_file`로 같은 데이터셋 안의 다른 라벨 표를 고른다 (config `labels_file`).
+    라벨 표에 source 컬럼이 없으면 12개 라벨이 모두 있는 study를 gt로 본다 (exp001 데이터).
     """
-    labels = pd.read_csv(data_dir / "labels.csv", dtype={ID_COL: str})
+    labels = pd.read_csv(data_dir / labels_file, dtype={ID_COL: str})
     if "source" not in labels.columns:
         full = labels[list(LABELS)].notna().all(axis=1)
         labels["source"] = np.where(full, "gt", "none")
@@ -144,16 +171,26 @@ def run(
     out_dir: Path,
     device: str | None = None,
     heartbeat: Callable[[], None] | None = None,
+    checkpoint_dir: Path | None = None,
 ) -> dict:
-    """fold마다 학습 → 검증 fold 예측(OOF) → 전체 OOF로 macro AUC."""
+    """fold마다 학습 → 검증 fold 예측(OOF) → 전체 OOF로 macro AUC.
+
+    `checkpoint_dir`가 있으면 fold가 끝날 때마다 그때까지의 가중치를 `folds_{k:02d}.safetensors`로
+    저장한다. 하네스는 실패·시간 초과 때 가장 최근 체크포인트를 HF에 올린다.
+    """
     data_dir, out_dir = Path(data_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = check_device(device)
     heartbeat = heartbeat or (lambda: None)
     seed_everything(config["seed"])
     started = time.time()
 
-    full_table = load_table(data_dir, config["target_slices"], config["n_folds"])
+    full_table = load_table(
+        data_dir,
+        config["target_slices"],
+        config.get("labels_file", "labels.csv"),
+        n_folds=config["n_folds"],
+    )
     is_gt = (full_table["source"] == "gt").to_numpy()
     has_label = np.stack(full_table["label_mask"]).any(axis=1)
     train_pool = has_label if config.get("train_on", "full") == "any" else is_gt
@@ -188,6 +225,9 @@ def run(
         weights.update(
             {f"fold{k}.{n}": t.detach().cpu().contiguous() for n, t in model.state_dict().items()}
         )
+        if checkpoint_dir is not None:
+            Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+            save_file(weights, str(Path(checkpoint_dir) / f"folds_{k:02d}.safetensors"))
 
     macro, per_label = macro_auc(np.stack(table["labels"]), oof)
     oof_df = pd.DataFrame(oof, columns=list(LABELS))
