@@ -14,13 +14,10 @@ Kaggle 추론은 `build_stack()`으로 test DICOM에서 같은 스택을 만든�
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pandas as pd
-import pydicom
 import torch
 import torch.nn.functional as F
-from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 from src.constants import ID_COL, LABELS
 
@@ -40,6 +37,7 @@ SLOTS64 = [
     ("Axial", -1, 12),
 ]
 # 공개 nartaa Raptor(0.949)의 96장 코퍼스: 구간 2–98%, 원본 384 px (exp014 학습 입력)
+# (`build_stack(..., SLOTS96, (0.02, 0.98), 384)`, 그 추론 코드와 비트 단위 일치 확인)
 SLOTS96 = [
     ("Sagittal", 1, 26),
     ("Sagittal", 0, 22),
@@ -57,6 +55,8 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 def _ordered_files(series_dir: Path) -> tuple[list[tuple[Path, float]], float]:
     """시리즈 파일을 슬라이스 법선 방향 위치로 정렬 → [(파일, PixelSpacing)], 중앙값 spacing."""
+    import pydicom  # DICOM 경로(추론·검증)에서만 쓴다 — 코퍼스 학습 Pod에는 없어도 된다
+
     recs, spacings = [], []
     for f in Path(series_dir).glob("*.dcm"):
         try:
@@ -80,6 +80,9 @@ def _ordered_files(series_dir: Path) -> tuple[list[tuple[Path, float]], float]:
 
 
 def _read_pixels(path: Path) -> np.ndarray:
+    import pydicom
+    from pydicom.pixel_data_handlers.util import apply_modality_lut
+
     d = pydicom.dcmread(path)
     a = apply_modality_lut(d.pixel_array, d).astype(np.float32)
     if str(getattr(d, "PhotometricInterpretation", "")) == "MONOCHROME1":
@@ -88,6 +91,8 @@ def _read_pixels(path: Path) -> np.ndarray:
 
 
 def _crop_resize(a: np.ndarray, ps: float, crop_mm: float, img: int) -> np.ndarray:
+    import cv2
+
     h, w = a.shape
     cpx = min(int(round(crop_mm / max(ps, 1e-3))), min(h, w))
     y0, x0 = (h - cpx) // 2, (w - cpx) // 2
