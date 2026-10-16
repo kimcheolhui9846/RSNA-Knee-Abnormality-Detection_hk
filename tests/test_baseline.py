@@ -10,7 +10,7 @@ from src.constants import ID_COL, LABELS  # noqa: E402
 from src.data.study_table import SLOTS  # noqa: E402
 from src.losses import masked_bce  # noqa: E402
 from src.models.baseline import KneeBaseline  # noqa: E402
-from src.train import make_synthetic_data, run  # noqa: E402
+from src.train import make_synthetic_data, run, validate_folds  # noqa: E402
 
 TINY = {"backbone": "resnet18", "pretrained": False, "embed_dim": 32, "dropout": 0.0}
 
@@ -97,3 +97,90 @@ def test_run_cross_validation_on_synthetic_data(tmp_path: Path) -> None:
     assert any(k.startswith("fold0.") for k in weights)
     assert any(k.startswith("fold1.") for k in weights)
     assert np.isfinite(result["macro_auc"]) or np.isnan(result["macro_auc"])
+
+
+def test_pseudo_labels_are_trained_on_but_only_ground_truth_is_evaluated(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    # 정답 12개 + pseudo 8개(일부 라벨 NaN), 캐시는 데이터 루트에 바로 둔다 (HF 데이터셋 구성)
+    make_synthetic_data(data, n_studies=12, depth=6, size=32, n_pseudo=8, cache_subdir=".")
+    config = {
+        "model": TINY,
+        "seed": 0,
+        "n_folds": 2,
+        "epochs": 1,
+        "batch_size": 4,
+        "lr": 1e-3,
+        "weight_decay": 0.0,
+        "depth": 4,
+        "size": 32,
+        "target_slices": 6,
+        "num_workers": 0,
+        "amp": False,
+        "train_on": "any",
+        "cache_dir": ".",
+    }
+
+    result = run(config, data_dir=data, out_dir=tmp_path / "out", device="cpu")
+
+    assert result["n_studies"] == 12  # 평가 대상 = 정답 study만
+    assert result["n_train_studies"] == 20  # 학습 대상 = 정답 + pseudo
+    oof = pd.read_csv(tmp_path / "out" / "oof.csv")
+    assert len(oof) == 12
+    assert not oof[ID_COL].str.startswith("pseudo").any()
+
+
+def _labels_and_folds() -> tuple[pd.DataFrame, pd.DataFrame]:
+    labels = pd.DataFrame(
+        {ID_COL: ["g0", "g1", "p0", "p1", "n0"], "source": ["gt", "gt", "pseudo", "pseudo", "none"]}
+    )
+    folds = pd.DataFrame({ID_COL: ["g0", "g1", "p0", "p1"], "fold": [0, 1, 0, 1]})
+    return labels, folds
+
+
+def test_validate_folds_accepts_complete_folds() -> None:
+    labels, folds = _labels_and_folds()
+    validate_folds(labels, folds, n_folds=2)  # source=none study는 folds에 없어도 된다
+
+
+@pytest.mark.parametrize(
+    "mutate, match",
+    [
+        (lambda f: f[f[ID_COL] != "p1"], "folds에 없는"),
+        (lambda f: pd.concat([f, f.iloc[[2]].assign(fold=1)]), "중복"),
+        (lambda f: f.assign(fold=[0, 1, 0, None]), "정수"),
+        (lambda f: f.assign(fold=[0, 1, 0, 5]), "범위"),
+    ],
+)
+def test_validate_folds_rejects_broken_folds(mutate, match) -> None:
+    labels, folds = _labels_and_folds()
+    with pytest.raises(ValueError, match=match):
+        validate_folds(labels, mutate(folds), n_folds=2)
+
+
+def test_run_fails_fast_when_external_folds_miss_a_pseudo_study(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    make_synthetic_data(data, n_studies=12, depth=6, size=32, n_pseudo=8, cache_subdir=".")
+    folds = pd.read_csv(data / "folds.csv", dtype={ID_COL: str})
+    folds[folds[ID_COL] != "pseudo003"].to_csv(data / "folds.csv", index=False)
+    with pytest.raises(ValueError, match="pseudo003"):
+        run(
+            {
+                "model": TINY,
+                "seed": 0,
+                "n_folds": 2,
+                "epochs": 1,
+                "batch_size": 4,
+                "lr": 1e-3,
+                "weight_decay": 0.0,
+                "depth": 4,
+                "size": 32,
+                "target_slices": 6,
+                "num_workers": 0,
+                "amp": False,
+                "train_on": "any",
+                "cache_dir": ".",
+            },
+            data,
+            tmp_path / "out",
+            device="cpu",
+        )
