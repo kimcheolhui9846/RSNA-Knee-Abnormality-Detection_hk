@@ -18,7 +18,8 @@ def load_series(series_dir: Path) -> np.ndarray:
 
     파일 이름(SOPInstanceUID)은 순서를 뜻하지 않는다. 슬라이스 법선 방향 위치의 오름차순으로
     정렬하고, 위치 정보가 하나라도 없으면 InstanceNumber로 정렬한다.
-    RescaleSlope/Intercept가 있으면 적용한다. 압축 DICOM은 pylibjpeg가 디코딩한다.
+    RescaleSlope/Intercept가 있으면 적용하고, MONOCHROME1이면 부호를 뒤집는다.
+    압축 DICOM은 pylibjpeg가 디코딩한다.
     """
     datasets = [pydicom.dcmread(p) for p in sorted(Path(series_dir).glob("*.dcm"))]
     if not datasets:
@@ -36,7 +37,10 @@ def load_series(series_dir: Path) -> np.ndarray:
         arr = ds.pixel_array.astype(np.float32)
         slope = float(ds.get("RescaleSlope", 1.0))
         intercept = float(ds.get("RescaleIntercept", 0.0))
-        slices.append(arr * slope + intercept)
+        arr = arr * slope + intercept
+        if ds.get("PhotometricInterpretation") == "MONOCHROME1":
+            arr = -arr  # 값이 클수록 밝도록 뒤집는다. 절대값은 이후 백분위 정규화가 맞춘다
+        slices.append(arr)
 
     shapes = {s.shape for s in slices}
     if len(shapes) != 1:

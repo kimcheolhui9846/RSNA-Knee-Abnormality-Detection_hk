@@ -13,6 +13,7 @@ dependencies = [
     "pylibjpeg-libjpeg",
     "pylibjpeg-openjpeg",
     "iterative-stratification",
+    "opencv-python-headless",
 ]
 
 [project.optional-dependencies]
