@@ -227,14 +227,66 @@ def test_ensemble_submission_is_rank_average_of_members(tmp_path: Path) -> None:
     assert sub[ID_COL].tolist() == ["t1", "t2", "t3"]
 
 
-def test_members_with_different_input_settings_are_rejected(tmp_path: Path) -> None:
-    from src.infer import Member, predict_members
+SLOT_DINO = {
+    "name": "slot_dino",
+    "backbone": "vit_tiny_patch16_224",
+    "pretrained": False,
+    "img_size": 32,
+    "unfreeze_last": 1,
+    "dropout": 0.0,
+}
+SLOT_CONFIG = {
+    "model": SLOT_DINO,
+    "input": "slot_image",
+    "img_out": 32,
+    "depth": 4,
+    "size": 32,
+    "target_slices": 4,
+}
+
+
+def _slot_member(path: Path) -> None:
+    from src.models import build_model
+
+    torch.manual_seed(2)
+    state = {}
+    for k in range(2):
+        model = build_model(SLOT_DINO)
+        state.update({f"fold{k}.{n}": t.contiguous() for n, t in model.state_dict().items()})
+    save_file(state, str(path))
+
+
+def test_slot_image_member_predicts_from_dicom_headers(tmp_path: Path) -> None:
+    # exp006: 헤더로 칸을 고르고 칸마다 RGB 1장. 칸이 있는 study는 fallback이 아니다
+    _test_dataset(tmp_path / "data")
+    _slot_member(tmp_path / "s.safetensors")
+    sub = predict(
+        tmp_path / "data",
+        tmp_path / "s.safetensors",
+        SLOT_CONFIG,
+        tmp_path / "s.csv",
+        device="cpu",
+        num_workers=0,
+    ).set_index(ID_COL)
+    assert not np.allclose(sub.loc["t1"].to_numpy(dtype=float), FALLBACK_PROB)
+    assert np.allclose(sub.loc["t3"].to_numpy(dtype=float), FALLBACK_PROB)  # 읽을 시리즈 없음
+
+
+def test_members_with_different_inputs_run_in_one_pass(tmp_path: Path) -> None:
+    # 슬라이스 입력(b0)과 칸 이미지 입력(DINO)을 함께 앙상블: 입력 묶음별로 만들고 순위 평균
+    from src.infer import Member, predict_members, rank_average
 
     _test_dataset(tmp_path / "data")
     _member_dir(tmp_path / "a", 0, CONFIG)
+    _slot_member(tmp_path / "s.safetensors")
+    kw = {"device": "cpu", "num_workers": 0}
+    data = tmp_path / "data"
     members = [
         Member("a", tmp_path / "a" / "model.safetensors", CONFIG),
-        Member("b", tmp_path / "a" / "model.safetensors", {**CONFIG, "depth": 8}),
+        Member("s", tmp_path / "s.safetensors", SLOT_CONFIG),
     ]
-    with pytest.raises(ValueError, match="입력 설정"):
-        predict_members(tmp_path / "data", members, tmp_path / "x.csv", device="cpu", num_workers=0)
+    sub = predict_members(data, members, tmp_path / "e.csv", **kw)
+    a = predict(data, tmp_path / "a" / "model.safetensors", CONFIG, tmp_path / "a.csv", **kw)
+    s = predict(data, tmp_path / "s.safetensors", SLOT_CONFIG, tmp_path / "s.csv", **kw)
+    expected = rank_average([a[list(LABELS)].to_numpy(), s[list(LABELS)].to_numpy()], [1, 1])
+    np.testing.assert_allclose(sub[list(LABELS)].to_numpy(), expected, rtol=1e-5)

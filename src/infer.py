@@ -28,7 +28,9 @@ from torch.utils.data import DataLoader, Dataset
 from src.constants import ID_COL, LABELS
 from src.data.dataset import slab_stack
 from src.data.dicom import load_series
+from src.data.headers import annotate, laterality, read_header
 from src.data.preprocess import preprocess_series
+from src.data.slot_image import SLOTS6, slot_image, slot_inputs
 from src.data.study_table import SLOTS, resample_depth, select_series
 from src.models import build_model
 from src.paths import data_dir
@@ -36,7 +38,16 @@ from src.submission import validate_submission
 
 FALLBACK_PROB = 0.5
 # 멤버끼리 같아야 하는 입력 설정 — 같으면 DICOM을 한 번만 읽어 모든 멤버에 넣는다
-DATA_KEYS = ("depth", "size", "slab", "target_slices")
+DATA_KEYS = (
+    "input",
+    "depth",
+    "size",
+    "slab",
+    "target_slices",
+    "img_out",
+    "crop_mm",
+    "slice_band",
+)
 log = logging.getLogger("infer")
 
 
@@ -109,59 +120,73 @@ def _fat_suppression(row) -> int | None:
 
 
 class TestStudyDataset(Dataset):
-    """study 하나 → (study_id, image (S, D, H, W) float 0~1, slot_mask (S,), 실패 여부)."""
+    """study 하나 → 입력 묶음별 이미지와 칸 마스크.
 
-    def __init__(self, study_ids: list[str], series: pd.DataFrame, series_root: Path, cfg: dict):
+    `cfgs`: 입력 설정(묶음) 목록. 시리즈 DICOM은 study마다 한 번만 읽어 모든 묶음에 쓴다.
+    - 기본(슬라이스 입력, exp001–005): `image (S, D, H, W)` 또는 2.5D `(S, D, slab, H, W)`
+    - `input: slot_image`(exp006~): 헤더로 칸 6개를 고르고 칸마다 RGB 1장 `(6, 3, out, out)`
+
+    반환: `images`·`masks`(묶음 순서 리스트), `failed`(모든 묶음에 칸이 하나도 없음).
+    """
+
+    def __init__(
+        self, study_ids: list[str], series: pd.DataFrame, series_root: Path, cfgs: dict | list
+    ):
         self.study_ids = study_ids
         self.by_study = {sid: g for sid, g in series.groupby(ID_COL)}
         self.series_root = series_root
-        self.cfg = cfg
+        self.cfgs = [cfgs] if isinstance(cfgs, dict) else list(cfgs)
+        sizes = {c["size"] for c in self.cfgs}
+        if len(sizes) != 1:
+            raise ValueError(f"입력 묶음의 size가 다르다: {sizes}")
+        self.size = sizes.pop()
+        self.need_headers = any(c.get("input") == "slot_image" for c in self.cfgs)
 
     def __len__(self) -> int:
         return len(self.study_ids)
 
-    def __getitem__(self, i: int) -> dict:
-        sid = self.study_ids[i]
-        depth, size, slab = self.cfg["depth"], self.cfg["size"], self.cfg.get("slab", 1)
+    def _read(self, sid: str) -> tuple[dict, pd.DataFrame]:
+        """시리즈마다 전처리 볼륨(캐시와 같은 함수)과 메타 한 행."""
+        volumes, rows = {}, []
+        for row in self.by_study.get(sid, pd.DataFrame()).itertuples():
+            key = str(row.SeriesInstanceUID)
+            try:
+                raw = load_series(self.series_root / sid / key)
+                volumes[key] = preprocess_series(raw, size=self.size)
+            except Exception as e:  # noqa: BLE001 — 시리즈 하나가 망가져도 나머지로 예측한다
+                log.warning("series 읽기 실패 %s/%s: %r", sid, key, e)
+                continue
+            meta = {
+                ID_COL: sid,
+                "SeriesInstanceUID": key,
+                "Anatomical_Plane": row.Anatomical_Plane,
+                "Fat_Suppression": _fat_suppression(row),
+                "n_slices": len(raw),
+                "orig_h": raw.shape[1],
+                "orig_w": raw.shape[2],
+                "status": "built",
+                "path": key,
+            }
+            if self.need_headers:
+                try:
+                    meta.update(read_header(self.series_root / sid / key))
+                except Exception as e:  # noqa: BLE001
+                    log.warning("series 헤더 읽기 실패 %s/%s: %r", sid, key, e)
+            rows.append(meta)
+        return volumes, pd.DataFrame(rows)
+
+    def _slices(self, cfg: dict, sid: str, volumes: dict, meta: pd.DataFrame) -> tuple:
+        depth, size, slab = cfg["depth"], cfg["size"], cfg.get("slab", 1)
         shape = (len(SLOTS), depth, size, size)
         if slab > 1:  # 2.5D: 학습과 같은 slab_stack
             shape = (len(SLOTS), depth, slab, size, size)
         image = np.zeros(shape, dtype=np.float32)
-        slot_mask = np.zeros(len(SLOTS), dtype=bool)
-
-        volumes, rows = {}, []
-        for row in self.by_study.get(sid, pd.DataFrame()).itertuples():
-            key = str(row.SeriesInstanceUID)
-            fat_sup = _fat_suppression(row)
-            if (
-                fat_sup is None
-            ):  # 칸을 정할 수 없으면 읽지 않고 건너뛴다 (예외로 추론 전체가 멈추지 않게)
-                log.warning(
-                    "series 메타데이터 결측 %s/%s: Fat_Suppression·Fluid_Sensitive", sid, key
-                )
-                continue
-            try:
-                vol = preprocess_series(load_series(self.series_root / sid / key), size=size)
-            except Exception as e:  # noqa: BLE001 — 시리즈 하나가 망가져도 나머지로 예측한다
-                log.warning("series 읽기 실패 %s/%s: %r", sid, key, e)
-                continue
-            volumes[key] = vol
-            rows.append((sid, key, row.Anatomical_Plane, fat_sup, len(vol), "built", key))
-
-        if rows:
-            index = pd.DataFrame(
-                rows,
-                columns=[
-                    ID_COL,
-                    "SeriesInstanceUID",
-                    "Anatomical_Plane",
-                    "Fat_Suppression",
-                    "n_slices",
-                    "status",
-                    "path",
-                ],
-            )
-            chosen = select_series(index, self.cfg["target_slices"]).loc[sid]
+        mask = np.zeros(len(SLOTS), dtype=bool)
+        # 칸(지방억제)을 정할 수 없는 시리즈는 쓰지 않는다
+        index = meta[meta["Fat_Suppression"].notna()] if len(meta) else meta
+        if len(index):
+            index = index.astype({"Fat_Suppression": int})
+            chosen = select_series(index, cfg["target_slices"]).loc[sid]
             for k, key in enumerate(chosen):
                 if key is not None:
                     vol = volumes[key]
@@ -169,12 +194,48 @@ class TestStudyDataset(Dataset):
                         slab_stack(vol, depth, slab) if slab > 1 else resample_depth(vol, depth)
                     )
                     image[k] = stacked.astype(np.float32) / 255.0
-                    slot_mask[k] = True
+                    mask[k] = True
+        return image, mask
+
+    def _slot_images(self, cfg: dict, volumes: dict, meta: pd.DataFrame) -> tuple:
+        out = cfg.get("img_out", 224)
+        image = np.zeros((len(SLOTS6), 3, out, out), dtype=np.float32)
+        mask = np.zeros(len(SLOTS6), dtype=bool)
+        if len(meta):
+            ann = annotate(meta)
+            ann["laterality"] = ann[ID_COL].map(laterality(ann))
+            cells = slot_inputs(ann)["slot6"].iloc[0]
+            lat = ann["laterality"].iloc[0]
+            lat = lat if lat in ("L", "R") else None
+            for k, cell in enumerate(cells):
+                if cell is None:
+                    continue
+                key, px, side, plane = cell
+                band = tuple(cfg.get("slice_band", (0.2, 0.8)))
+                crop = cfg.get("crop_mm", 130.0)
+                img = slot_image(
+                    volumes[key], px, side, plane, lat, band=band, crop_mm=crop, out=out
+                )
+                image[k] = img / 255.0
+                mask[k] = True
+        return image, mask
+
+    def __getitem__(self, i: int) -> dict:
+        sid = self.study_ids[i]
+        volumes, meta = self._read(sid)
+        images, masks = [], []
+        for cfg in self.cfgs:
+            if cfg.get("input") == "slot_image":
+                image, mask = self._slot_images(cfg, volumes, meta)
+            else:
+                image, mask = self._slices(cfg, sid, volumes, meta)
+            images.append(torch.from_numpy(image))
+            masks.append(torch.from_numpy(mask))
         return {
             "study_id": sid,
-            "image": torch.from_numpy(image),
-            "slot_mask": torch.from_numpy(slot_mask),
-            "failed": not slot_mask.any(),
+            "images": images,
+            "masks": masks,
+            "failed": not any(bool(m.any()) for m in masks),
         }
 
 
@@ -202,13 +263,14 @@ def predict_members(
     data_root = Path(data_root)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     started = time.time()
-    data_cfg = {k: members[0].config.get(k) for k in DATA_KEYS}
-    for m in members[1:]:
-        other = {k: m.config.get(k) for k in DATA_KEYS}
-        if other != data_cfg:
-            raise ValueError(
-                f"멤버 입력 설정이 다르다: {members[0].name} {data_cfg} vs {m.name} {other}"
-            )
+    # 입력 설정이 같은 멤버끼리 묶는다 (DICOM은 study마다 한 번만 읽는다)
+    groups: list[dict] = []
+    member_group: list[int] = []
+    for m in members:
+        cfg = {k: m.config.get(k) for k in DATA_KEYS}
+        if cfg not in groups:
+            groups.append(cfg)
+        member_group.append(groups.index(cfg))
 
     test = pd.read_csv(data_root / "test.csv", dtype={ID_COL: str})
     series = pd.read_csv(
@@ -223,7 +285,8 @@ def predict_members(
         device,
     )
 
-    ds = TestStudyDataset(study_ids, series, data_root / "test_series", members[0].config)
+    group_cfgs = [members[member_group.index(g)].config for g in range(len(groups))]
+    ds = TestStudyDataset(study_ids, series, data_root / "test_series", group_cfgs)
     loader = DataLoader(ds, batch_size=1, num_workers=num_workers)
     amp = device == "cuda"
     probs = np.full((len(members), len(study_ids), len(LABELS)), FALLBACK_PROB, np.float32)
@@ -235,8 +298,12 @@ def predict_members(
             if bool(batch["failed"][0]):
                 n_failed += 1
                 continue
-            image, mask = batch["image"].to(device), batch["slot_mask"].to(device)
+            images = [x.to(device) for x in batch["images"]]
+            masks = [x.to(device) for x in batch["masks"]]
             for j, folds in enumerate(models):
+                image, mask = images[member_group[j]], masks[member_group[j]]
+                if not bool(mask.any()):  # 이 묶음에 칸이 없으면 FALLBACK_PROB
+                    continue
                 fold_probs = [torch.sigmoid(f(image, mask).float())[0].cpu().numpy() for f in folds]
                 probs[j, row[sid]] = np.mean(fold_probs, axis=0)
             if (i + 1) % 100 == 0:
