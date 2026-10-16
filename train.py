@@ -94,6 +94,38 @@ def heartbeat() -> None:
             pass
 
 
+def fetch_data(config: dict, data_dir: Path, beat=heartbeat) -> None:
+    """`data_repo`(HF 데이터셋)에서 이 config가 쓰는 코퍼스·라벨·fold 파일만 `data_dir`로 받는다.
+
+    데이터셋 전체(코퍼스 2종, 54 GB)를 받으면 Pod 디스크가 모자라 필요한 것만 고른다.
+    받는 동안 heartbeat를 계속 보낸다 (정체 감지에 걸리지 않게).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as Pending
+
+    from huggingface_hub import snapshot_download
+
+    patterns = [
+        f"{config.get('corpus_dir', 'raptor_corpus')}/*",
+        config.get("labels_file", "labels.csv"),
+        "folds.csv",
+    ]
+    with ThreadPoolExecutor(1) as pool:
+        job = pool.submit(
+            snapshot_download,
+            config["data_repo"],
+            repo_type="dataset",
+            local_dir=str(data_dir),
+            allow_patterns=patterns,
+        )
+        while True:
+            try:
+                job.result(timeout=30)
+                break
+            except Pending:
+                beat()
+
+
 # ---------------------------------------------------------------------------
 # 학습 (이 함수만 채우면 된다)
 # ---------------------------------------------------------------------------
@@ -111,6 +143,49 @@ def train_model(cfg: Config) -> Path:
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config = yaml.safe_load(Path(cfg.config_path).read_text(encoding="utf-8"))
     data_dir = cfg.data_dir
+
+    if config.get("trainer") == "raptor_predict":  # exp009: fold 체크포인트로 train OOF 예측만
+        from huggingface_hub import hf_hub_download
+
+        from src.train import check_device
+        from src.train_raptor import make_synthetic_corpus, predict_folds
+
+        repo = config.get("checkpoint_repo", cfg.hf_repo_id)
+        fetch = lambda run: Path(  # noqa: E731
+            hf_hub_download(repo, f"runs/{run}/checkpoints/last.safetensors")
+        )
+        if cfg.smoke_test:
+            data_dir = cfg.output_dir / "synthetic_data"
+            make_synthetic_corpus(data_dir)
+            if config.get("labels_file", "labels.csv") != "labels.csv":
+                shutil.copyfile(data_dir / "labels.csv", data_dir / config["labels_file"])
+            config.update(corpus_dir="raptor_corpus", res=32, k_eval=6, batch_size=2, num_workers=0)
+            config["model"] = {**config["model"], "backbone": "resnet18", "grad_ckpt": False}
+            config["fold_checkpoints"] = {0: "smoke0", 1: "smoke1"}
+            from safetensors.torch import save_file
+
+            from src.models import build_model
+
+            smoke_ck = cfg.output_dir / "smoke_ck.safetensors"
+            m = build_model({**config["model"], "pretrained": False})
+            save_file(
+                {f"fold0.{k}": v.contiguous() for k, v in m.state_dict().items()}, str(smoke_ck)
+            )
+            fetch = lambda run: smoke_ck  # noqa: E731
+        result = predict_folds(
+            config,
+            data_dir=data_dir,
+            out_dir=cfg.output_dir,
+            fetch=fetch,
+            device=check_device(None),
+            heartbeat=heartbeat,
+        )
+        cfg.extra["result"] = {
+            k: result.get(k) for k in ("macro_auc", "pseudo_holdout_auc", "elapsed_sec")
+        }
+        return (
+            cfg.output_dir / "model.safetensors"
+        )  # 새 가중치 없음 (업로드는 없는 파일을 건너뛴다)
 
     if (
         config.get("trainer") == "raptor"
@@ -139,6 +214,8 @@ def train_model(cfg: Config) -> Path:
                 "pretrained": False,
                 "grad_ckpt": False,
             }
+        elif config.get("data_repo"):
+            fetch_data(config, data_dir)
         result = run_raptor(
             config,
             data_dir=data_dir,
