@@ -205,11 +205,29 @@ def make_windows(
     return (x - IMAGENET_MEAN) / IMAGENET_STD if normalize else x
 
 
+def mirror_windows(x: torch.Tensor, centers: list[int], slot_sizes: list[int]) -> torch.Tensor:
+    """무릎 좌우 거울상 (공개 nartaa Raptor의 anatomical mirroring과 같은 규칙).
+
+    창 중심 슬라이스가 속한 칸으로 축을 정한다: 시상(앞 두 칸)은 세 슬라이스 채널 순서를 뒤집고
+    (시상 슬라이스는 좌우로 쌓여 있다), 관상·축상은 영상 가로를 뒤집는다. 3D 전체를 거울상으로
+    바꾸므로 내측·외측은 그대로 내측·외측이다 → 라벨이 바뀌지 않는다.
+    """
+    bounds = np.cumsum([0, *slot_sizes])
+    depth = int(bounds[-1])
+    out = x.clone()
+    for j, c in enumerate(centers):
+        c = max(1, min(c, depth - 2))  # make_windows와 같은 중심
+        slot = int(np.searchsorted(bounds, c, side="right") - 1)
+        out[j] = x[j].flip(0) if slot in (0, 1) else x[j].flip(-1)
+    return out
+
+
 class CorpusWindows(torch.utils.data.Dataset):
     """공개 코퍼스(memmap) → `(windows (K, 3, res, res), labels, label_mask, study_id)`.
 
     `vols`: `(N, D, H, W)` uint8 (memmap 가능), `masks`: `(N, D)`, `rows`: study → 행 번호.
-    학습이면 무작위 창 `k`개와 밝기 ±10% 변형(뒤집기 없음: 좌우는 신호다).
+    학습이면 무작위 창 `k`개와 밝기 ±10% 변형. 2D 뒤집기는 하지 않는다(좌우는 신호다).
+    `mirror_slots`(칸별 장수)가 있으면 학습 때 절반 확률로 3D 좌우 거울상(`mirror_windows`).
     """
 
     def __init__(
@@ -222,10 +240,12 @@ class CorpusWindows(torch.utils.data.Dataset):
         k: int,
         train: bool,
         seed: int = 0,
+        mirror_slots: list[int] | None = None,
     ):
         self.table = table.reset_index(drop=True)
         self.vols, self.masks, self.rows = vols, masks, rows
         self.res, self.k, self.train, self.seed = res, k, train, seed
+        self.mirror_slots = mirror_slots
         self.epoch = 0
 
     def __len__(self) -> int:
@@ -236,11 +256,12 @@ class CorpusWindows(torch.utils.data.Dataset):
         r = self.rows[row[ID_COL]]
         rng = np.random.default_rng([self.seed, self.epoch, i]) if self.train else None
         vol = np.asarray(self.vols[r])
-        x = make_windows(
-            vol, window_centers(np.asarray(self.masks[r]), self.k, rng), self.res, False
-        )
+        centers = window_centers(np.asarray(self.masks[r]), self.k, rng)
+        x = make_windows(vol, centers, self.res, False)
         if self.train:
             x = (x * (1.0 + (rng.random() - 0.5) * 0.2)).clamp(0, 1)
+            if self.mirror_slots and rng.random() < 0.5:
+                x = mirror_windows(x, centers, self.mirror_slots)
         x = (x - IMAGENET_MEAN) / IMAGENET_STD
         labels = np.nan_to_num(np.asarray(row["labels"], dtype=np.float32), nan=0.0)
         return {

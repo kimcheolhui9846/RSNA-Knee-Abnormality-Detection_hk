@@ -210,6 +210,8 @@ def train_model(cfg: Config) -> Path:
                 num_workers=0,
                 swa_last=2,
             )
+            if config.get("mirror_slots"):  # 합성 코퍼스(12장)에 맞춘 칸 → 거울상 경로도 거친다
+                config["mirror_slots"] = [3, 3, 2, 2, 2]
             config["model"] = {
                 **config["model"],
                 "backbone": "resnet18",
