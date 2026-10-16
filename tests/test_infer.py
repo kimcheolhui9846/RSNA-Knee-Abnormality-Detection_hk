@@ -314,14 +314,15 @@ def _raptor_member(path: Path) -> None:
     save_file(state, str(path))
 
 
-def test_raptor_member_builds_stack_from_dicom(tmp_path: Path) -> None:
-    # exp007: DICOM → 44장 스택 → 창 4개. 시리즈가 있는 study는 fallback이 아니다
+@pytest.mark.parametrize("slots", ["SLOTS44", "SLOTS96"])
+def test_raptor_member_builds_stack_from_dicom(tmp_path: Path, slots: str) -> None:
+    # exp007: DICOM → 44장 스택 → 창 4개 (exp014: 96장). 시리즈가 있는 study는 fallback이 아니다
     _test_dataset(tmp_path / "data")
     _raptor_member(tmp_path / "r.safetensors")
     sub = predict(
         tmp_path / "data",
         tmp_path / "r.safetensors",
-        RAPTOR_CONFIG,
+        {**RAPTOR_CONFIG, "slots": slots},
         tmp_path / "r.csv",
         device="cpu",
         num_workers=0,
