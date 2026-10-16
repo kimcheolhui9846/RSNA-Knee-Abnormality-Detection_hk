@@ -7,6 +7,9 @@
    (없는 칸은 마스크).
 3. 12개 소견마다 학습한 질의(query)가 토큰 전체에 attention → 소견별 문맥 벡터 → 소견별 출력.
    소견마다 보는 칸·슬라이스가 다르다 (예: MCL은 관상면, PF OA는 축상면).
+4. (exp005~, `slot_pool`) 칸마다 깊이 방향 평균·최대 → MLP → 있는 칸 평균한 study 벡터를
+   소견별 문맥 벡터에 더한다. exp004에서 attention이 균등 평균으로 퇴화해 국소 소견이
+   희석됐기 때문에, exp002처럼 최대 풀링 경로를 함께 둔다.
 """
 
 import timm
@@ -33,6 +36,8 @@ class KneeDinoAttn(nn.Module):
         max_depth: int = 64,
         n_slots: int = len(SLOTS),
         n_labels: int = len(LABELS),
+        query_init_std: float = 0.02,
+        slot_pool: bool = False,
     ) -> None:
         super().__init__()
         self.encoder = timm.create_model(
@@ -44,11 +49,17 @@ class KneeDinoAttn(nn.Module):
         self.slot_embed = nn.Parameter(torch.zeros(n_slots, dim))
         self.depth_embed = nn.Parameter(torch.zeros(max_depth, dim))
         self.norm = nn.LayerNorm(dim)
-        self.queries = nn.Parameter(torch.randn(n_labels, dim) * 0.02)
+        # exp004의 0.02는 q·k가 너무 작아 attention이 균등 평균으로 머물렀다 → exp005는 1.0
+        self.queries = nn.Parameter(torch.randn(n_labels, dim) * query_init_std)
         self.attn = nn.MultiheadAttention(dim, n_heads, dropout=dropout, batch_first=True)
         self.drop = nn.Dropout(dropout)
         self.out_w = nn.Parameter(torch.randn(n_labels, dim) * 0.02)
         self.out_b = nn.Parameter(torch.zeros(n_labels))
+        self.slot_pool = (
+            nn.Sequential(nn.Linear(2 * dim, dim), nn.GELU(), nn.LayerNorm(dim))
+            if slot_pool
+            else None
+        )
         self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1), persistent=False)
 
@@ -80,7 +91,7 @@ class KneeDinoAttn(nn.Module):
                 x, size=(self.img_size, self.img_size), mode="bilinear", align_corners=False
             )
         x = (x - self.mean) / self.std
-        feats = self.encoder(x).view(present.shape[0], d, -1)  # (P, D, F)
+        feats = self.encoder(x).view(present.shape[0], d, self.encoder.num_features)  # (P, D, F)
         slot_idx = slot_mask.nonzero()[:, 1]
         feats = feats + self.slot_embed[slot_idx][:, None, :] + self.depth_embed[:d][None]
 
@@ -92,4 +103,15 @@ class KneeDinoAttn(nn.Module):
 
         queries = self.queries.unsqueeze(0).expand(b, -1, -1)
         ctx, _ = self.attn(queries, tokens, tokens, key_padding_mask=ignore)
+        if self.slot_pool is not None:
+            ctx = ctx + self._pooled(feats, slot_mask)[:, None, :]
         return (self.drop(ctx) * self.out_w).sum(-1) + self.out_b
+
+    def _pooled(self, feats: torch.Tensor, slot_mask: torch.Tensor) -> torch.Tensor:
+        """칸마다 깊이 평균·최대 → MLP → 있는 칸 평균. `feats (P, D, F)` → `(B, F)`."""
+        per_slot = self.slot_pool(torch.cat([feats.mean(1), feats.amax(1)], dim=-1))  # (P, F)
+        b, s = slot_mask.shape
+        grid = per_slot.new_zeros(b, s, per_slot.shape[-1])
+        grid[slot_mask] = per_slot
+        n = slot_mask.sum(1, keepdim=True).clamp(min=1).to(grid.dtype)
+        return grid.sum(1) / n

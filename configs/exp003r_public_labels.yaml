@@ -1,0 +1,26 @@
+# exp003r — exp003(exp002 모델 + labels_v2) 재실행. 라벨 효과를 분리하는 대조군 (exp003은 GPU 문제로 결과 없음).
+# exp003과 다른 점은 보조 CV(eval_pseudo)뿐이다 — 학습 자체는 같다.
+seed: 42
+n_folds: 5
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  embed_dim: 256
+  dropout: 0.2
+
+cache_dir: "."
+labels_file: labels_v2.csv
+train_on: any
+eval_pseudo: true
+
+depth: 16
+size: 256
+target_slices: 30
+
+epochs: 4
+batch_size: 2
+lr: 3.0e-4
+weight_decay: 1.0e-2
+amp: true
+num_workers: 8
